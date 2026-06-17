@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.core.errors import AppError
-from app.routers import auth, health
+from app.routers import auth, employees, health
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -37,4 +37,5 @@ async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
 
 app.include_router(health.router)
 app.include_router(auth.router)
-# 도메인 라우터 include 는 여기에 추가 (예: leave, employee ...)
+app.include_router(employees.router)
+# 도메인 라우터 include 는 여기에 추가 (예: leave ...)

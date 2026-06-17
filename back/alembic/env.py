@@ -14,6 +14,7 @@ from app.models.base import Base
 # 모든 모델 import — Base.metadata 가 자동 채워짐 (alembic autogenerate 용).
 # 도메인 모델 추가 시 여기에 import 추가. 예) from app.models import user, leave_request
 # (미사용 import 경고는 ruff noqa F401 로 억제)
+from app.models import employee  # noqa: F401
 
 config = context.config
 if config.config_file_name:
