@@ -57,3 +57,9 @@ async def upsert_mirror(session: AsyncSession, rows: list[dict]) -> tuple[int, i
 
 async def get_by_id(session: AsyncSession, employee_id: UUID) -> Employee | None:
     return await session.get(Employee, employee_id)
+
+
+async def list_all(session: AsyncSession) -> list[Employee]:
+    """전 직원 명부 — 이름순. (디렉토리 목록 조회, SPEC-002 §3)"""
+    result = await session.execute(select(Employee).order_by(Employee.name))
+    return list(result.scalars().all())

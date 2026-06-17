@@ -18,6 +18,7 @@ from app.core.deps import get_current_employee, get_db, require_access_token
 from app.main import app
 from app.models.employee import Employee
 from app.repositories import employee as employee_repo
+from app.routers import employees as employees_router
 from app.services import roster
 
 
@@ -89,6 +90,77 @@ async def test_mirror_only_known_fields(db_session) -> None:
     emp = await employee_repo.get_by_id(db_session, uuid.UUID(eid))
     assert emp.position is None  # mediness position 미러 안 함 (ERP 소유, 신규는 None)
     assert not hasattr(emp, "voice_registered")
+
+
+@pytest.mark.asyncio
+async def test_list_all_returns_ordered_by_name(db_session) -> None:
+    # 고유 prefix 로 내가 넣은 행만 추출(실제 DB 에 기존 행이 있어도 안전). 상대 순서 = 이름순 검증.
+    pfx = f"zzlist-{uuid.uuid4().hex[:6]}-"
+    a, b, c = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    mine = {a, b, c}
+    await employee_repo.upsert_mirror(db_session, [
+        _row(a, name=pfx + "C"), _row(b, name=pfx + "A"), _row(c, name=pfx + "B"),
+    ])
+    rows = await employee_repo.list_all(db_session)
+    ordered = [e.name for e in rows if str(e.id) in mine]
+    assert ordered == [pfx + "A", pfx + "B", pfx + "C"]  # 이름순(상대 순서)
+
+
+# ---- admin 동기/목록 엔드포인트 권한 게이트 -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_employees_admin_200(monkeypatch) -> None:
+    admin = Employee(id=uuid.uuid4(), email="a@x.com", name="관리자", role="admin", active=True)
+    sample = [
+        Employee(id=uuid.uuid4(), email="e1@x.com", name="직원1", role="member", active=True,
+                 position="staff", department="개발"),
+        Employee(id=uuid.uuid4(), email="e2@x.com", name="직원2", role="admin", active=False,
+                 position=None, department=None),
+    ]
+    # ORM 직렬화에 필요한 timestamps 채움(실제는 server_default; 테스트 객체는 수동)
+    from datetime import UTC, datetime
+    now = datetime(2026, 6, 18, tzinfo=UTC)
+    for e in sample:
+        e.created_at = e.updated_at = now
+
+    async def _fake_list(session):
+        return sample
+
+    app.dependency_overrides[get_current_employee] = lambda: admin
+    app.dependency_overrides[get_db] = lambda: None
+    monkeypatch.setattr(employees_router.employee_repo, "list_all", _fake_list)
+    try:
+        async with _client() as c:
+            resp = await c.get("/admin/employees", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 2
+        assert set(data[0]) == {"id", "email", "name", "role", "active",
+                                "position", "department", "created_at", "updated_at"}
+        assert data[0]["position"] == "staff" and data[1]["active"] is False
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_list_employees_member_403() -> None:
+    member = Employee(id=uuid.uuid4(), email="m@x.com", name="멤버", role="member", active=True)
+    app.dependency_overrides[get_current_employee] = lambda: member
+    app.dependency_overrides[get_db] = lambda: None
+    try:
+        async with _client() as c:
+            resp = await c.get("/admin/employees", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_list_employees_no_token_401() -> None:
+    async with _client() as c:
+        resp = await c.get("/admin/employees")
+    assert resp.status_code == 401
 
 
 # ---- admin 동기 엔드포인트 권한 게이트 ------------------------------------

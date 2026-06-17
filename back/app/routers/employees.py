@@ -1,8 +1,9 @@
-"""직원 roster 라우터 — admin 동기(SPEC-002 §3).
+"""직원 roster 라우터 — admin 동기 + 목록 조회(SPEC-002 §3).
 
-POST /admin/employees/sync — admin 이 "동기화" → 그 admin 토큰으로 mediness `/admin/users`
-pull → employee upsert. 권한 = current_user employee.role=="admin"(require_admin, member 403).
-직원 목록 조회(GET)는 P4(FE 디렉토리) 범위 — 본 Phase 미포함.
+- POST /admin/employees/sync — admin "동기화" → mediness `/admin/users` pull → upsert.
+- GET  /admin/employees      — 직원 명부 목록(디렉토리). require_admin.
+
+권한 = current_user employee.role=="admin"(require_admin, member 403).
 """
 
 from typing import Annotated
@@ -12,9 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db, require_access_token, require_admin
 from app.models.employee import Employee
+from app.repositories import employee as employee_repo
+from app.schemas.employee import EmployeeOut
 from app.services import roster
 
 router = APIRouter(prefix="/admin/employees", tags=["roster"])
+
+
+@router.get("", response_model=list[EmployeeOut])
+async def list_employees(
+    _admin: Annotated[Employee, Depends(require_admin)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> list[Employee]:
+    """erp DB 전 직원 명부(이름순). require_admin(member 403·토큰없음 401)."""
+    return await employee_repo.list_all(session)
 
 
 @router.post("/sync")
