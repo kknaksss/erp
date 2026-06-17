@@ -1,0 +1,136 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+  ERP 디자인 토큰 — visual SoT = products/erp/21-html/leave-inquiry-my.html · leave-admin-hr.html
+  Tailwind v4 (CSS-first). shadcn/ui 시맨틱 토큰(:root → @theme inline) + 시안 raw 팔레트(@theme).
+  라이트 전용 (시안에 다크 디자인 없음 — slate 캔버스 위 흰 카드).
+*/
+
+:root {
+  --radius: 0.5rem;
+
+  /* Pretendard(본문) · JetBrains Mono(수치) — system.md 디자인 시스템 */
+  --font-sans: "Pretendard", system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+
+  /* shadcn 시맨틱 — slate 캔버스 / 흰 카드 / brand-600 primary */
+  --background: #f8fafc; /* mgray-50 캔버스 */
+  --foreground: #0f172a; /* mgray-800 본문 */
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #2563eb; /* brand-600 */
+  --primary-foreground: #ffffff;
+  --secondary: #f1f5f9; /* mgray-100 */
+  --secondary-foreground: #334155; /* mgray-700 */
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b; /* mgray-500 */
+  --accent: #eff6ff; /* brand-50 */
+  --accent-foreground: #1d4ed8; /* brand-700 */
+  --destructive: #dc2626; /* mred-500 */
+  --destructive-foreground: #ffffff;
+  --success: #047857; /* mgreen-500 */
+  --success-foreground: #ffffff;
+  --warning: #b45309; /* mamber-500 */
+  --warning-foreground: #ffffff;
+  --border: #e2e8f0; /* mgray-200 */
+  --input: #e2e8f0;
+  --ring: #2563eb; /* brand-600 */
+
+  /* 사이드바 */
+  --sidebar: #ffffff;
+  --sidebar-foreground: #334155;
+  --sidebar-primary: #2563eb;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eff6ff;
+  --sidebar-accent-foreground: #1d4ed8;
+  --sidebar-border: #f1f5f9;
+  --sidebar-ring: #2563eb;
+}
+
+/* shadcn 시맨틱 토큰 → Tailwind 유틸 (값은 :root var 참조 → inline) */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+/* 시안 raw 팔레트 — 21-html tailwind.config 미러 (셸/도메인 화면 1:1 매핑용) */
+@theme {
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-300: #93c5fd;
+  --color-brand-500: #2563eb;
+  --color-brand-700: #1d4ed8;
+
+  --color-mgray-50: #f8fafc;
+  --color-mgray-100: #f1f5f9;
+  --color-mgray-200: #e2e8f0;
+  --color-mgray-300: #cbd5e1;
+  --color-mgray-400: #94a3b8;
+  --color-mgray-500: #64748b;
+  --color-mgray-600: #475569;
+  --color-mgray-700: #334155;
+  --color-mgray-800: #0f172a;
+
+  --color-mred-50: #fef2f2;
+  --color-mred-100: #fecaca;
+  --color-mred-500: #dc2626;
+
+  --color-mamber-50: #fffbeb;
+  --color-mamber-100: #fde68a;
+  --color-mamber-500: #b45309;
+
+  --color-mgreen-50: #ecfdf5;
+  --color-mgreen-100: #a7f3d0;
+  --color-mgreen-500: #047857;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+  }
+}
