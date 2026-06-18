@@ -59,6 +59,15 @@ async def get_by_id(session: AsyncSession, employee_id: UUID) -> Employee | None
     return await session.get(Employee, employee_id)
 
 
+async def get_by_email(session: AsyncSession, email: str) -> Employee | None:
+    """email → employee (Slack intake 제출자 매핑, SPEC-004 §직원 매핑 — 1:1 확정).
+
+    매칭은 email 1:1(이름 매칭 폐기). 미일치(None)는 호출 service 가 신청 미생성으로 처리.
+    """
+    result = await session.execute(select(Employee).where(Employee.email == email))
+    return result.scalars().first()
+
+
 async def list_all(session: AsyncSession) -> list[Employee]:
     """전 직원 명부 — 이름순. (디렉토리 목록 조회, SPEC-002 §3)"""
     result = await session.execute(select(Employee).order_by(Employee.name))

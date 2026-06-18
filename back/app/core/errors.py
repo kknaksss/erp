@@ -42,3 +42,19 @@ class ConflictError(AppError):
     error_code = "CONFLICT"
     status_code = 409
     message = "요청이 현재 상태와 충돌합니다"
+
+
+class InvalidWebhookSecretError(AppError):
+    """Slack webhook 공유 시크릿 토큰 불일치 — 출처 미검증(신청 미생성)."""
+
+    error_code = "INVALID_WEBHOOK_SECRET"
+    status_code = 401
+    message = "webhook 시크릿 토큰이 올바르지 않습니다"
+
+
+class InvalidLeaveRequestError(AppError):
+    """연차 신청 폼 invariant 위반(unit↔amount·am_pm·Off Day·종류 등)."""
+
+    error_code = "INVALID_LEAVE_REQUEST"
+    status_code = 422
+    message = "연차 신청 내용이 올바르지 않습니다"

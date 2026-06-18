@@ -158,6 +158,31 @@ async def zero_active_lots(
     return result.rowcount
 
 
+async def expiring_lots(
+    session: AsyncSession,
+    employee_id: UUID,
+    categories: list[LeaveCategory],
+) -> list[LeaveGrant]:
+    """만료 안내용 — 유효기간 있는 active lot(remaining>0·expiry NOT NULL). 만료 임박순.
+
+    본인 조회의 **보상/포상 만료 안내**(SPEC-004 §본인 조회)용. 만료일 ASC 정렬(임박 우선).
+    `연차`(무만료=expiry NULL)는 제외된다(IS NOT NULL 조건). status 필터(active)는 잔여
+    derive 와 동일 — 이미 expired/소진 lot 은 안내 대상 아님.
+    """
+    stmt = (
+        select(LeaveGrant)
+        .where(
+            LeaveGrant.employee_id == employee_id,
+            LeaveGrant.category.in_(categories),
+            LeaveGrant.status == GrantStatus.ACTIVE,
+            LeaveGrant.remaining > 0,
+            LeaveGrant.expiry_date.is_not(None),
+        )
+        .order_by(LeaveGrant.expiry_date.asc(), LeaveGrant.granted_at.asc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def expire_lapsed_lots(session: AsyncSession, today: date) -> int:
     """만료일 경과(wall-clock `today`) active lot → `status=expired`. 반환 전환 행 수(flush 까지).
 

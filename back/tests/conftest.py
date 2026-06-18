@@ -21,6 +21,7 @@ os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://erp:erp@localhost:5432/erp_test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ.setdefault("MEDINESS_API_URL", "http://localhost:28080")
+os.environ.setdefault("ERP_SLACK_WEBHOOK_SECRET", "test-webhook-secret")
 
 import pytest_asyncio  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402

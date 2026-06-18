@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # mediness 인증 위임 — 로그인/리프레시/로그아웃 라이프사이클 프록시 대상 (URL 필수)
     mediness_api_url: str = Field(...)
 
+    # Slack 워크플로우 webhook 공유 시크릿 (intake 출처 검증, SPEC-004 §검증) — secret 필수
+    erp_slack_webhook_secret: str = Field(...)
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
