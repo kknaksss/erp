@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.employee import Employee
 from app.models.enums import AmPm, LeaveCategory, LeaveUnit, RequestChannel, RequestStatus
 from app.models.leave_request import LeaveRequest
 
@@ -76,6 +77,29 @@ async def create(
     # refresh(greenlet) 회피.
     await session.refresh(req)
     return req
+
+
+async def get_by_id(session: AsyncSession, request_id: UUID) -> LeaveRequest | None:
+    """단건 조회 — HR 승인/반려 대상 lookup(WP-003 P2). 없으면 None(호출 service 가 404)."""
+    return await session.get(LeaveRequest, request_id)
+
+
+async def list_pending(
+    session: AsyncSession,
+) -> list[tuple[LeaveRequest, Employee]]:
+    """HR 신청 큐 = `신청됨` 전 직원 + 신청자(employee) 조인. 사용일 ASC(임박 우선)·동률 created_at ASC.
+
+    **이 WP 는 `신청됨` 만**(`취소요청됨` 은 WP-004 — partial index `(status) WHERE IN(신청됨,취소요청됨)`
+    은 공유하나 조회는 `신청됨` 한정). 처리분(승인/반려)은 status 변경으로 자연 제외 → 이력.
+    """
+    stmt = (
+        select(LeaveRequest, Employee)
+        .join(Employee, LeaveRequest.employee_id == Employee.id)
+        .where(LeaveRequest.status == RequestStatus.REQUESTED)
+        .order_by(LeaveRequest.use_date.asc(), LeaveRequest.created_at.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+    return [(req, emp) for req, emp in rows]
 
 
 async def list_for_employee(

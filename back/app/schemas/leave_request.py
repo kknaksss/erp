@@ -9,7 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import AmPm, LeaveCategory, LeaveUnit, RequestChannel, RequestStatus
 
@@ -70,3 +70,39 @@ class LeaveSelfOut(BaseModel):
     total: Decimal  # `전체` = 4 합산 표시값
     expiring: list[ExpiringLotOut]  # 보상/포상 유효기간 lot
     history: list[LeaveRequestOut]  # 본인 신청/사용 이력(상태 포함)
+
+
+# ---- HR 승인/반려 (WP-003 Phase 2) ---------------------------------------
+
+
+class PendingRequestOut(BaseModel):
+    """HR 신청 큐 1건 — 신청 내용 + 신청자 식별(이름/email). `신청됨` 만(SPEC-003 §S-2)."""
+
+    id: UUID
+    employee_id: UUID
+    employee_name: str  # 신청자 이름(큐 표시)
+    employee_email: str
+    category: LeaveCategory
+    unit: LeaveUnit
+    amount: Decimal
+    am_pm: AmPm | None
+    use_date: date
+    note: str | None
+    status: RequestStatus
+    channel: RequestChannel
+    created_at: datetime
+
+
+class RejectIn(BaseModel):
+    """반려 입력 — `reason` 필수(누락/공백 → 422, SPEC-003 §케이스 매트릭스 '반려 사유 누락')."""
+
+    reason: str = Field(min_length=1)
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+
+class ApprovalOut(BaseModel):
+    """승인 결과 — 처리된 신청 + 차감 후 해당 종류 잔여 + 음수 경고 플래그(하드 차단 X)."""
+
+    request: LeaveRequestOut
+    balance: Decimal  # 차감 후 해당 category 잔여(음수 가능)
+    warning: bool  # balance < 0 (SPEC-003 §케이스 매트릭스 음수 경고)

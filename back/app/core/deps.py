@@ -80,6 +80,24 @@ async def require_admin(
     return employee
 
 
+# HR 판정 값 = `department == "인사"` 확정(SPEC-003 §권한 분기). admin(role) 과 별개 축.
+HR_DEPARTMENT = "인사"
+
+
+async def require_hr(
+    employee: Annotated[Employee, Depends(get_current_employee)],
+) -> Employee:
+    """HR 게이트 — `department == "인사"` 아니면 403(SPEC-003 연차관리 권한).
+
+    `require_admin`(role==admin)과 다른 축 — 연차 승인/반려·신청 큐는 인사 부서 직원만.
+    **자기 승인 허용**: 본인 신청도 본인이 승인 가능(별도 분리 승인자 없음 — SPEC-003 §권한).
+    current_employee(토큰 sub→employee) 위에 department 게이트만 얹는다.
+    """
+    if employee.department != HR_DEPARTMENT:
+        raise ForbiddenError()
+    return employee
+
+
 __all__ = [
     "get_db",
     "CurrentUser",
@@ -87,4 +105,5 @@ __all__ = [
     "require_access_token",
     "get_current_employee",
     "require_admin",
+    "require_hr",
 ]
