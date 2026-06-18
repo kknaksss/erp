@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { JetBrains_Mono } from "next/font/google";
 
-import { AppSidebar } from "@/components/app-sidebar";
+import { AuthProvider } from "@/lib/auth";
 import "./globals.css";
 
 // 본문 = Pretendard(아래 CDN link), 수치/코드 = JetBrains Mono.
@@ -29,12 +29,7 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-full bg-mgray-50 text-mgray-800">
-        <div className="mx-auto flex min-h-screen w-full max-w-[1440px] bg-card">
-          <AppSidebar />
-          <main className="flex min-w-0 flex-1 flex-col bg-mgray-50">
-            {children}
-          </main>
-        </div>
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
