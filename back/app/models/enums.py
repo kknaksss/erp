@@ -68,6 +68,14 @@ class RequestChannel(str, enum.Enum):
     ERP = "erp"
 
 
+class EmploymentType(str, enum.Enum):
+    """채용구분(employee) — **값은 영문 코드**(department 'hr' 영문화 선례 정합, 표시 라벨은 FE)."""
+
+    FULLTIME = "fulltime"  # 정규직
+    CONTRACT = "contract"  # 계약직
+    PARTTIME = "parttime"  # 알바
+
+
 def _pg_enum(py_enum: type[enum.Enum], name: str) -> SAEnum:
     """PG native enum 컬럼 타입 — value(한글) 저장, 타입 생성은 migration 위임."""
     return SAEnum(
@@ -87,6 +95,7 @@ grant_source_enum = _pg_enum(GrantSource, "grant_source")
 grant_status_enum = _pg_enum(GrantStatus, "grant_status")
 request_status_enum = _pg_enum(RequestStatus, "request_status")
 request_channel_enum = _pg_enum(RequestChannel, "request_channel")
+employment_type_enum = _pg_enum(EmploymentType, "employment_type")
 
 
 # migration 의 CREATE/DROP TYPE 순회용 (이름, 값목록).
@@ -98,4 +107,5 @@ ALL_PG_ENUMS: list[tuple[str, list[str]]] = [
     ("grant_status", [m.value for m in GrantStatus]),
     ("request_status", [m.value for m in RequestStatus]),
     ("request_channel", [m.value for m in RequestChannel]),
+    ("employment_type", [m.value for m in EmploymentType]),
 ]
