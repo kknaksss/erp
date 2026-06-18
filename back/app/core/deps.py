@@ -80,16 +80,17 @@ async def require_admin(
     return employee
 
 
-# HR 판정 값 = `department == "인사"` 확정(SPEC-003 §권한 분기). admin(role) 과 별개 축.
-HR_DEPARTMENT = "인사"
+# HR 판정 값 = `department == "hr"` (영문 코드 — admin↔사용자 2026-06-18 결정 1, 구 "인사").
+# admin(role) 과 별개 축. `is_hr` 계산(GET /me)도 이 상수 단일 소스로 한다.
+HR_DEPARTMENT = "hr"
 
 
 async def require_hr(
     employee: Annotated[Employee, Depends(get_current_employee)],
 ) -> Employee:
-    """HR 게이트 — `department == "인사"` 아니면 403(SPEC-003 연차관리 권한).
+    """HR 게이트 — `department == "hr"` 아니면 403(SPEC-003 연차관리 권한).
 
-    `require_admin`(role==admin)과 다른 축 — 연차 승인/반려·신청 큐는 인사 부서 직원만.
+    `require_admin`(role==admin)과 다른 축 — 연차 승인/반려·신청 큐는 HR 부서 직원만.
     **자기 승인 허용**: 본인 신청도 본인이 승인 가능(별도 분리 승인자 없음 — SPEC-003 §권한).
     current_employee(토큰 sub→employee) 위에 department 게이트만 얹는다.
     """

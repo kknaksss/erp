@@ -2,7 +2,7 @@
 
 - 승인(service·실제 DB·롤백): FEFO(만료 임박 lot 부터)·차감량=종류×단위·분할(합 일치)·음수 흡수+경고.
 - 반려: 사유 있으면 `반려됨`·allocation 0 / 사유 누락은 스키마(422)에서 거부.
-- 권한(endpoint): 비-HR(department≠인사) 승인/반려/큐 403 · 자기 승인 허용 · 큐 = `신청됨` 만.
+- 권한(endpoint): 비-HR(department≠"hr") 승인/반려/큐 403 · 자기 승인 허용 · 큐 = `신청됨` 만.
 
 approve/reject service 가 commit 하지만 db_session fixture 가 outer 트랜잭션 롤백으로 격리한다
 (test_leave_intake 와 동일 패턴 — 실제 DB 미오염).
@@ -38,7 +38,7 @@ from app.repositories import leave_request as request_repo
 from app.services import leave_approval
 
 FY = 2026
-HR = "인사"
+HR = "hr"
 
 
 def _client() -> httpx.AsyncClient:

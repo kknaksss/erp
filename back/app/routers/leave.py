@@ -5,7 +5,7 @@ WP-003 Phase 1:
 - POST /leave/intake      — ② ERP 신청 폼(로그인 본인, sub 식별).
 - GET  /leave/me          — 본인 종류별 잔여+만료 안내+이력(P3 FE 가 소비, 본인 스코프).
 
-WP-003 Phase 2 (HR — `department == "인사"` 게이트):
+WP-003 Phase 2 (HR — `department == "hr"` 게이트):
 - GET  /leave/admin/requests                  — 신청 큐(`신청됨` 전 직원 + 신청자).
 - POST /leave/admin/requests/{id}/approve     — 승인 → 선택 종류 FEFO 차감(음수 허용·경고).
 - POST /leave/admin/requests/{id}/reject      — 반려 → `반려됨`(사유 필수·차감 없음).
