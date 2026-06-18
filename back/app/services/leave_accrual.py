@@ -18,8 +18,10 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import GrantSource, LeaveCategory
+from app.models.leave_adjustment import LeaveAdjustment
 from app.repositories import employee as employee_repo
 from app.repositories import leave_grant as grant_repo
+from app.services import leave_balance
 
 
 async def accrue_annual(
@@ -80,12 +82,16 @@ async def grant_new_hire(
 async def carryover(
     session: AsyncSession, fiscal_year: int, valid_until: date
 ) -> dict[str, int]:
-    """연말 남은연차(>0) → `보상`+`source=이월` lot. 반환 {carried, skipped, none}.
+    """연말 남은연차(>0) → `보상`+`source=이월` lot **+ 원 `연차` 리셋(0화)**. 반환 {carried, skipped, none}.
 
-    남은연차 = sum(active 연차 lot remaining) + sum(연차 adjustment delta). >0 일 때만 lot 생성
-    (≤0 = lot 안 만듦). expiry_date = valid_until(파라미터 — HR/정책 공급). 이미 그 회계연도
-    이월 lot 보유 직원 skip(멱등). granted_at = 연말 12/31(UTC, 멱등 키 기준). 원 `연차` lot 은
-    건드리지 않는다(차감/만료 = P3·WP-003).
+    **리셋형**(admin↔사용자 2026-06-18 결정 — T-008): 회계 갱신 시 `연차` 는 누적하지 않고 이월로
+    *전환*. 남은연차(carried) = `leave_balance.category_balance(연차)`(active lot remaining 합 +
+    연차 adjustment delta — derive 로 통일). `>0` 이면:
+      1) `보상`+`source=이월` lot 으로 carried 보존(expiry_date = valid_until 파라미터·granted_by NULL).
+      2) **원 `연차` 0화**: active `연차` lot remaining → 0 + 잔여 delta 가 있으면 상쇄 adjustment.
+         불변식 = 리셋 후 `category_balance(연차) == 0` → 이듬해 발생이 작년분과 중복 집계 안 됨(P3 노출 중복 해소).
+    `≤0` = no-op(보존·리셋할 것 없음). 이미 그 회계연도 이월 lot 보유 직원 skip(멱등 — 2회 호출도
+    이월·리셋 1회분). granted_at = 연말 12/31(UTC, 멱등 키). audit 보존(lot/adjustment hard delete X).
     """
     granted_at = datetime(fiscal_year, 12, 31, tzinfo=UTC)
     carried = skipped = none = 0
@@ -95,12 +101,13 @@ async def carryover(
         ):
             skipped += 1
             continue
-        remaining = await grant_repo.sum_category_remaining(
+        remaining = await leave_balance.category_balance(
             session, emp.id, LeaveCategory.ANNUAL
-        ) + await grant_repo.sum_adjustment_delta(session, emp.id, LeaveCategory.ANNUAL)
+        )
         if remaining <= 0:
             none += 1
             continue
+        # 1) 이월 보존 — 연말 남은연차를 `보상`(source=이월) lot 으로 전환
         await grant_repo.create_lot(
             session,
             employee_id=emp.id,
@@ -110,6 +117,22 @@ async def carryover(
             expiry_date=valid_until,
             granted_at=granted_at,
         )
+        # 2) 원 `연차` 리셋 — lot 0화 + 잔여 delta 상쇄(불변식: category_balance(연차)==0)
+        await grant_repo.zero_active_lots(session, emp.id, LeaveCategory.ANNUAL)
+        adj_delta = await grant_repo.sum_adjustment_delta(
+            session, emp.id, LeaveCategory.ANNUAL
+        )
+        if adj_delta != 0:
+            session.add(
+                LeaveAdjustment(
+                    employee_id=emp.id,
+                    category=LeaveCategory.ANNUAL,
+                    delta=-adj_delta,
+                    reason=f"회계 이월 리셋 (FY{fiscal_year})",
+                    adjusted_by=emp.id,
+                )
+            )
+            await session.flush()
         carried += 1
     await session.commit()
     return {"carried": carried, "skipped": skipped, "none": none}

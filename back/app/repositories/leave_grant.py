@@ -136,6 +136,28 @@ async def valid_lots_fefo(
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def zero_active_lots(
+    session: AsyncSession, employee_id: UUID, category: LeaveCategory
+) -> int:
+    """해당 category active lot `remaining` → 0 (회계 이월 리셋). 반환 갱신 행 수(flush 까지).
+
+    `amount`·행은 보존(audit — hard delete 금지, domains 보존 원칙). remaining 만 0화하여 잔여
+    합산·FEFO(`remaining > 0`) 양쪽에서 빠진다. commit 은 호출 service. carryover 리셋 전용.
+    """
+    stmt = (
+        update(LeaveGrant)
+        .where(
+            LeaveGrant.employee_id == employee_id,
+            LeaveGrant.category == category,
+            LeaveGrant.status == GrantStatus.ACTIVE,
+        )
+        .values(remaining=Decimal(0))
+    )
+    result = await session.execute(stmt)
+    await session.flush()
+    return result.rowcount
+
+
 async def expire_lapsed_lots(session: AsyncSession, today: date) -> int:
     """만료일 경과(wall-clock `today`) active lot → `status=expired`. 반환 전환 행 수(flush 까지).
 
