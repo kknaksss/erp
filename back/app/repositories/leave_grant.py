@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import GrantSource, GrantStatus, LeaveCategory
@@ -106,3 +106,52 @@ async def sum_adjustment_delta(
         LeaveAdjustment.category == category,
     )
     return Decimal((await session.execute(stmt)).scalar_one())
+
+
+async def valid_lots_fefo(
+    session: AsyncSession,
+    employee_id: UUID,
+    category: LeaveCategory,
+    use_date: date,
+) -> list[LeaveGrant]:
+    """동일 category 의 **valid lot** FEFO 후보(만료 임박순). 차감은 WP-003 이 소비.
+
+    valid lot = `(expiry_date IS NULL OR use_date <= expiry_date) AND remaining > 0`
+    (= leave_grant §Invariant 단일 규칙 — **소비 판정 정본**). wall-clock today 가 아니라 신청
+    `use_date` 와 lot `expiry_date` 비교. **status 필터 없음**(잔여 derive 는 active 만 보지만,
+    소비 valid 판정은 status 가 아니라 이 단일 규칙이 정본 — denormalize 인 status 로 가리지 않음).
+    정렬 = `expiry_date` ASC(임박 우선)·**NULL(연차 무만료) 최후미**·동률은 `granted_at` ASC.
+    category 가로지르지 않음.
+    """
+    stmt = (
+        select(LeaveGrant)
+        .where(
+            LeaveGrant.employee_id == employee_id,
+            LeaveGrant.category == category,
+            LeaveGrant.remaining > 0,
+            or_(LeaveGrant.expiry_date.is_(None), LeaveGrant.expiry_date >= use_date),
+        )
+        .order_by(LeaveGrant.expiry_date.asc().nulls_last(), LeaveGrant.granted_at.asc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def expire_lapsed_lots(session: AsyncSession, today: date) -> int:
+    """만료일 경과(wall-clock `today`) active lot → `status=expired`. 반환 전환 행 수(flush 까지).
+
+    `expiry_date < today` (만료일 당일은 `use_date <= expiry` 로 아직 소비 가능 → 경과 아님,
+    그 다음날부터 경과). `연차`(expiry NULL)는 매칭 안 됨 → 항상 active. 멱등 — 이미 expired 는
+    `status = active` 조건에 안 걸려 재처리 무해. commit 은 호출 service(트리거 배선 = WP-005).
+    """
+    stmt = (
+        update(LeaveGrant)
+        .where(
+            LeaveGrant.status == GrantStatus.ACTIVE,
+            LeaveGrant.expiry_date.is_not(None),
+            LeaveGrant.expiry_date < today,
+        )
+        .values(status=GrantStatus.EXPIRED)
+    )
+    result = await session.execute(stmt)
+    await session.flush()
+    return result.rowcount
