@@ -60,10 +60,14 @@ class SeedStats:
     placeholder_emails: list[str] = field(default_factory=list)  # 교정 필요 (name, email)
 
 
-async def _find_by_name(session: AsyncSession, name: str) -> Employee | None:
-    """이름 매칭(대장 name → employee.name). 동명이인 가정 안 함 — 첫 행."""
+async def _find_by_email(session: AsyncSession, email: str) -> Employee | None:
+    """email 매칭(대장 email → employee.email = mediness users.id 연결키).
+
+    **이름 매칭 금지**: employee.id == mediness users.id == 로그인 토큰 sub 라서, 연차를
+    로그인 identity 에 정확히 붙이려면 안정 키인 email 로 찾아 그 행의 id 를 써야 한다.
+    """
     return (await session.execute(
-        select(Employee).where(Employee.name == name))).scalars().first()
+        select(Employee).where(Employee.email == email))).scalars().first()
 
 
 async def _already_seeded(session: AsyncSession, employee_id: UUID) -> bool:
@@ -80,9 +84,9 @@ async def _resolve_employee(session: AsyncSession, entry: dict, stats: SeedStats
     매칭/생성 후 hire_date·department 세팅(email/role 등 기존 미러 값은 보존 — 덮어쓰지 않음).
     """
     name = entry["name"]
-    emp = await _find_by_name(session, name)
+    email = entry["email"]
+    emp = await _find_by_email(session, email)
     if emp is None:
-        email = PLACEHOLDER_EMAILS.get(name, f"{name}.seed@medisolveai.com")
         emp = Employee(id=uuid4(), email=email, name=name, role=None, active=True)
         session.add(emp)
         stats.created += 1
