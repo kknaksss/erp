@@ -63,3 +63,11 @@ async def list_all(session: AsyncSession) -> list[Employee]:
     """전 직원 명부 — 이름순. (디렉토리 목록 조회, SPEC-002 §3)"""
     result = await session.execute(select(Employee).order_by(Employee.name))
     return list(result.scalars().all())
+
+
+async def list_active(session: AsyncSession) -> list[Employee]:
+    """active=true 직원만 — 이름순. (발생/이월 대상 = SPEC-003 §S-4 '전 active 직원')"""
+    result = await session.execute(
+        select(Employee).where(Employee.active.is_(True)).order_by(Employee.name)
+    )
+    return list(result.scalars().all())
