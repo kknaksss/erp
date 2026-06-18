@@ -101,7 +101,6 @@ export default function DirectoryPage() {
     <>
       <AppHeader
         title="직원 디렉토리"
-        description="ERP 직원 명부 — mediness roster 미러"
         actions={
           isAdmin && state.kind === "ok" ? (
             <Button onClick={onSync} disabled={syncing}>
