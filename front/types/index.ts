@@ -89,3 +89,37 @@ export interface ErpIntakeBody {
   use_date: string;
   note?: string;
 }
+
+// GET /me (MeOut) — auth 컨텍스트 self 해석 단일 소스. is_hr 은 BE 가 계산(department=="hr").
+export interface Me {
+  id: string;
+  email: string;
+  name: string;
+  role: Role | null;
+  department: string | null;
+  is_hr: boolean;
+}
+
+// HR 신청 큐 1건 (PendingRequestOut) — 신청 내용 + 신청자 식별. `신청됨`만.
+export interface PendingRequest {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  employee_email: string;
+  category: LeaveCategory;
+  unit: LeaveUnit;
+  amount: string;
+  am_pm: AmPm | null;
+  use_date: string;
+  note: string | null;
+  status: RequestStatus;
+  channel: RequestChannel;
+  created_at: string;
+}
+
+// POST /leave/admin/requests/{id}/approve 응답 (ApprovalOut). warning=차감 후 잔여 음수.
+export interface ApprovalResult {
+  request: LeaveRequest;
+  balance: string; // Decimal 문자열(음수 가능) — 표시 전용
+  warning: boolean;
+}

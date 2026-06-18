@@ -31,7 +31,7 @@ const workspaceNav: NavItem[] = [
 ];
 
 const adminNav: NavItem[] = [
-  { label: "연차관리", icon: CalendarDays, badge: "HR" }, // 후속 — placeholder
+  { label: "연차관리", icon: CalendarDays, href: "/leave/admin", badge: "HR" }, // WP-003 P4 — HR 전용
 ];
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
@@ -64,7 +64,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
 }
 
 export function AppSidebar() {
-  const { user, role, isAdmin, logout } = useAuth();
+  const { user, role, isHr, logout } = useAuth();
   const pathname = usePathname();
 
   const initial = user?.name?.[0] ?? "·";
@@ -96,7 +96,7 @@ export function AppSidebar() {
         ))}
       </div>
 
-      {isAdmin ? (
+      {isHr ? (
         <>
           <div className="px-4 pb-1 pt-5 text-[11px] font-semibold uppercase tracking-wide text-mgray-500">
             관리자 (HR)
