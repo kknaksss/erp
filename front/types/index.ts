@@ -42,3 +42,50 @@ export interface SyncResult {
   updated: number;
   new: number;
 }
+
+// ---- 연차 (WP-003) — back/app/schemas/leave_request.py 와 정렬 ----------------
+// enum 은 한글 value 로 직렬화/파싱(BE 계약). Decimal 은 문자열로 옴(표시 전용 — 산술 X).
+
+export type LeaveCategory = "연차" | "보상" | "포상" | "Off Day";
+export type LeaveUnit = "전일" | "반차" | "반반차";
+export type AmPm = "오전" | "오후";
+export type RequestStatus = "신청됨" | "승인됨" | "반려됨";
+export type RequestChannel = "slack" | "erp";
+
+// 신청/이력 1건 (LeaveRequestOut). amount 는 서버 derive(문자열) — 입력엔 안 보냄.
+export interface LeaveRequest {
+  id: string;
+  category: LeaveCategory;
+  unit: LeaveUnit;
+  amount: string; // Decimal 문자열 ("1.0"/"0.5"/"0.25")
+  am_pm: AmPm | null;
+  use_date: string; // YYYY-MM-DD
+  note: string | null;
+  status: RequestStatus;
+  channel: RequestChannel;
+  created_at: string;
+}
+
+// 보상/포상 만료 안내 1건 (ExpiringLotOut).
+export interface ExpiringLot {
+  category: LeaveCategory;
+  remaining: string; // Decimal 문자열
+  expiry_date: string; // YYYY-MM-DD
+}
+
+// GET /leave/me (LeaveSelfOut). balances 4종류 키 항상 존재(BE 보장).
+export interface LeaveSelf {
+  balances: Record<LeaveCategory, string>;
+  total: string;
+  expiring: ExpiringLot[];
+  history: LeaveRequest[];
+}
+
+// POST /leave/intake body (ErpIntakeIn). am_pm 은 반차/반반차만, 전일은 생략. amount 안 보냄.
+export interface ErpIntakeBody {
+  category: LeaveCategory;
+  unit: LeaveUnit;
+  am_pm?: AmPm;
+  use_date: string;
+  note?: string;
+}

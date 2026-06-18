@@ -26,7 +26,7 @@ type NavItem = {
 
 const workspaceNav: NavItem[] = [
   { label: "대시보드", icon: LayoutGrid, href: "/" },
-  { label: "연차조회", icon: CalendarCheck }, // WP-002 — placeholder
+  { label: "연차조회", icon: CalendarCheck, href: "/leave" }, // WP-003 P3 — 전 직원
   { label: "직원 디렉토리", icon: Users, href: "/directory" },
 ];
 
