@@ -106,19 +106,27 @@ async def test_balances_independent_and_total(db_session) -> None:
 # ---- 만료 처리 (expiry 경과 → expired · 합산 제외 · 멱등 · 연차 무만료) ----------
 
 
+async def _lot_status(session, gid) -> GrantStatus:
+    return (await session.execute(
+        select(LeaveGrant).where(LeaveGrant.id == gid))).scalar_one().status
+
+
 @pytest.mark.asyncio
 async def test_expired_lot_excluded_from_balance(db_session) -> None:
     eid = await _seed_employee(db_session)
-    await _lot(db_session, eid, LeaveCategory.COMP, Decimal("3"), expiry=date(FY, 1, 31))  # 경과
-    await _lot(db_session, eid, LeaveCategory.COMP, Decimal("2"), expiry=date(FY + 1, 6, 30))  # 유효
+    lapsed = await _lot(db_session, eid, LeaveCategory.COMP, Decimal("3"), expiry=date(FY, 1, 31))  # 경과
+    valid = await _lot(db_session, eid, LeaveCategory.COMP, Decimal("2"), expiry=date(FY + 1, 6, 30))  # 유효
     today = date(FY, 6, 1)
 
     assert await leave_balance.category_balance(db_session, eid, LeaveCategory.COMP) == Decimal("5")
-    n = await leave_balance.expire_lapsed_lots(db_session, today)
-    assert n == 1  # 경과분 1개만 전환
+    await leave_balance.expire_lapsed_lots(db_session, today)
+    # 경과분만 expired 전환(본인 lot 기준 — 전역 카운트는 사전 시드 데이터에 의존하므로 검사 X)
+    assert await _lot_status(db_session, lapsed.id) == GrantStatus.EXPIRED
+    assert await _lot_status(db_session, valid.id) == GrantStatus.ACTIVE
     assert await leave_balance.category_balance(db_session, eid, LeaveCategory.COMP) == Decimal("2")
-    # 멱등 — 재실행 시 추가 전환 0
-    assert await leave_balance.expire_lapsed_lots(db_session, today) == 0
+    # 멱등 — 재실행해도 본인 유효 lot 은 active 유지
+    await leave_balance.expire_lapsed_lots(db_session, today)
+    assert await _lot_status(db_session, valid.id) == GrantStatus.ACTIVE
 
 
 @pytest.mark.asyncio
@@ -136,12 +144,14 @@ async def test_annual_never_expires(db_session) -> None:
 @pytest.mark.asyncio
 async def test_expiry_boundary_day_not_lapsed(db_session) -> None:
     eid = await _seed_employee(db_session)
-    await _lot(db_session, eid, LeaveCategory.COMP, Decimal("2"), expiry=date(FY, 6, 30))
+    lot = await _lot(db_session, eid, LeaveCategory.COMP, Decimal("2"), expiry=date(FY, 6, 30))
 
-    # 만료일 당일은 아직 소비 가능(use_date<=expiry) → 경과 아님
-    assert await leave_balance.expire_lapsed_lots(db_session, date(FY, 6, 30)) == 0
+    # 만료일 당일은 아직 소비 가능(use_date<=expiry) → 경과 아님(본인 lot 기준)
+    await leave_balance.expire_lapsed_lots(db_session, date(FY, 6, 30))
+    assert await _lot_status(db_session, lot.id) == GrantStatus.ACTIVE
     # 다음날부터 경과
-    assert await leave_balance.expire_lapsed_lots(db_session, date(FY, 7, 1)) == 1
+    await leave_balance.expire_lapsed_lots(db_session, date(FY, 7, 1))
+    assert await _lot_status(db_session, lot.id) == GrantStatus.EXPIRED
 
 
 # ---- valid lot / FEFO 후보 (use_date<=expiry · expiry ASC · NULL 최후미) --------
