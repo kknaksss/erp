@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
+import { AppModuleHeader } from "@/components/app-module-header";
 import { AppSidebar } from "@/components/app-sidebar";
 import { useAuth } from "@/lib/auth";
 
@@ -27,12 +28,16 @@ export default function AppLayout({
     );
   }
 
+  // 시안(leave-inquiry-my.html): 전폭 세로 스택 — 글로벌 모듈 헤더 → (사이드바 + 메인).
   return (
-    <div className="mx-auto flex min-h-screen w-full max-w-[1440px] bg-card">
-      <AppSidebar />
-      <main className="flex min-w-0 flex-1 flex-col bg-mgray-50">
-        {children}
-      </main>
+    <div className="flex min-h-screen w-full flex-col bg-white">
+      <AppModuleHeader />
+      <div className="flex min-h-0 flex-1">
+        <AppSidebar />
+        <main className="flex min-w-0 flex-1 flex-col bg-mgray-50">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }
