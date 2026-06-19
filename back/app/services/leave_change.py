@@ -120,6 +120,9 @@ async def approve_change(
     차감 전이라 복원 없음 — 둘 다 `취소됨`+`deleted_at`(soft delete). 재신청 승인: `apply_fefo_charge`
     FEFO 차감. 둘 중 하나라도 실패하면 commit 미도달 → 함께 롤백(원자성). 비-HR 403(router).
     없음 404·이미 처리 409.
+
+    승인 완료 후 재신청 `change_group_id` 해제(`reject_change` 가 원건을 떼는 것과 대칭) →
+    정상 `승인됨` 신청으로 일반 취소/사용 흐름 복귀(묶음 게이트 잔존 = 단건 취소 영구 409 방지).
     """
     original, reapplication = await _load_pending_bundle(session, change_group_id)
     now = datetime.now(UTC)
@@ -134,6 +137,11 @@ async def approve_change(
 
     # 2) 재신청 승인(FEFO 차감 — WP-003 코어 그대로 소비). 실패 시 위 취소도 롤백.
     await leave_approval.apply_fefo_charge(session, reapplication, hr)
+
+    # 3) 재신청 묶음 해제 — reject_change 가 원건(살아있는 행)을 떼는 것과 대칭. 변경 승인 완료
+    #    후 재신청은 정상 `승인됨` 신청이므로 일반 취소/사용 흐름 복귀(change_group_id 게이트
+    #    잔존 시 단건 취소 영구 409 데드락 방지). 변경 진행 중엔 둘 다 묶여 단건 취소 차단 유지.
+    reapplication.change_group_id = None
 
     await session.flush()
     await session.commit()

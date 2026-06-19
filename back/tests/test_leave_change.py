@@ -203,6 +203,60 @@ async def test_approve_change_pending_original_no_restore(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_approve_change_unlinks_reapplication_group(db_session) -> None:
+    """변경 승인 후 재신청 change_group_id = NULL(reject 대칭) — 일반 승인됨 신청 복귀.
+
+    원건(취소됨)은 묶음 보존(이미 취소+soft delete, 재취소는 status 게이트로 무관).
+    """
+    hr = await _seed_employee(db_session, department=HR)
+    emp = await _seed_employee(db_session)
+    await _lot(db_session, emp.id, LeaveCategory.COMP, Decimal("3.0"))
+    original = await _request(db_session, emp.id, created_at=EARLY)
+    _o, reapp0 = await leave_change.request_change(db_session, emp, original.id, _payload())
+
+    orig, reapp = await leave_change.approve_change(db_session, hr, reapp0.change_group_id)
+
+    assert reapp.status == RequestStatus.APPROVED
+    assert reapp.change_group_id is None                  # 묶음 해제(일반 흐름 복귀)
+    assert orig.status == RequestStatus.CANCELLED
+    assert orig.change_group_id is not None               # 원건(취소됨)은 묶음 보존
+
+
+@pytest.mark.asyncio
+async def test_approve_change_reapplication_cancellable(db_session) -> None:
+    """핵심 회귀: 변경 승인된 재신청 → 일반 취소(취소요청→HR 승인→복원) 가능. 409 데드락 없음."""
+    from app.services import leave_cancel
+    hr = await _seed_employee(db_session, department=HR)
+    emp = await _seed_employee(db_session)
+    lot = await _lot(db_session, emp.id, LeaveCategory.COMP, Decimal("3.0"))
+    original = await _request(db_session, emp.id, created_at=EARLY)
+    _o, reapp0 = await leave_change.request_change(db_session, emp, original.id, _payload())
+    _orig, reapp = await leave_change.approve_change(db_session, hr, reapp0.change_group_id)
+    assert reapp.status == RequestStatus.APPROVED and reapp.change_group_id is None
+    assert (await grant_repo.get_by_id(db_session, lot.id)).remaining == Decimal("2.00")  # 재신청 차감
+
+    # 취소 요청(승인분 경로) → 취소요청됨. **409 안 남**(과거엔 change_group_id 잔존으로 데드락).
+    creq = await leave_cancel.request_cancel(db_session, emp, reapp.id, reason="재변경")
+    assert creq.status == RequestStatus.CANCEL_REQUESTED
+
+    # HR 취소승인 → 취소됨 + soft delete + 원-lot 복원(2.0→3.0).
+    done = await leave_cancel.approve_cancel(db_session, hr, reapp.id)
+    assert done.status == RequestStatus.CANCELLED and done.deleted_at is not None
+    assert (await grant_repo.get_by_id(db_session, lot.id)).remaining == Decimal("3.00")
+
+
+@pytest.mark.asyncio
+async def test_change_in_progress_reapplication_single_cancel_blocked(db_session) -> None:
+    """변경 진행 중(승인 전) 재신청 단건 취소 → 409(묶음 원자성 보호 유지)."""
+    from app.services import leave_cancel
+    emp = await _seed_employee(db_session)
+    original = await _request(db_session, emp.id, created_at=EARLY)
+    _o, reapp = await leave_change.request_change(db_session, emp, original.id, _payload())
+    with pytest.raises(ConflictError):
+        await leave_cancel.request_cancel(db_session, emp, reapp.id, reason=None)
+
+
+@pytest.mark.asyncio
 async def test_approve_change_already_processed_409(db_session) -> None:
     """이미 처리된 변경 묶음 재승인 → 409(이중 처리 차단)."""
     hr = await _seed_employee(db_session, department=HR)
