@@ -69,3 +69,15 @@ class InvalidBulkGrantError(AppError):
     error_code = "INVALID_BULK_GRANT"
     status_code = 422
     message = "벌크 부여 내용이 올바르지 않습니다"
+
+
+class InvalidAdjustmentError(AppError):
+    """HR 연차수 조정 invariant 위반(delta=0 항목·비활성 대상 등). WP-005 Phase 2.
+
+    벌크 부여와 의미가 다르므로 별도 클래스. `detail` 에 실패 원인을 실어 보낸다(다건 한
+    요청은 전체/롤백이라 HR 이 항목을 정정하게).
+    """
+
+    error_code = "INVALID_ADJUSTMENT"
+    status_code = 422
+    message = "연차수 조정 내용이 올바르지 않습니다"

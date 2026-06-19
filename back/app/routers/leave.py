@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_employee, get_db, require_hr
 from app.models.employee import Employee
 from app.repositories import employee as employee_repo
+from app.schemas.leave_adjustment import LeaveAdjustmentIn, LeaveAdjustmentOut
 from app.schemas.leave_grant import BulkGrantIn, BulkGrantOut
 from app.schemas.leave_request import (
     ApprovalOut,
@@ -47,6 +48,7 @@ from app.schemas.leave_request import (
     SlackIntakeIn,
 )
 from app.services import (
+    leave_adjustment,
     leave_approval,
     leave_cancel,
     leave_change,
@@ -310,3 +312,21 @@ async def bulk_grant(
     미존재 대상 404 · 비활성 대상 422(부분 무시 없음). 빈 대상 리스트 422(스키마).
     """
     return await leave_grant_ops.bulk_grant(session, hr, payload)
+
+
+# ---- HR 연차수 조정 (WP-005 Phase 2 — require_hr) -------------------------
+
+
+@router.post("/admin/adjustments", response_model=LeaveAdjustmentOut)
+async def adjust_leave(
+    payload: LeaveAdjustmentIn,
+    hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveAdjustmentOut:
+    """한 직원의 잔여를 종류별로 한 번에 ± 보정(전체/롤백) + audit. 비-HR 403·토큰없음 401.
+
+    4 종류 전부 조정 대상(연차 포함). delta≠0(0 항목 422)·delta 음수 허용(결과 음수 잔여 허용,
+    경고는 FE)·미존재 대상 404·비활성 대상 422·빈 항목 리스트 422(스키마). 잔여는 derive 가
+    delta 를 합산해 자동 반영(이중 반영 없음).
+    """
+    return await leave_adjustment.adjust(session, hr, payload)
