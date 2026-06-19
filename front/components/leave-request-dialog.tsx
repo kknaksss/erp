@@ -4,6 +4,9 @@
 // 종류(연차/보상/포상/Off Day) × 사용 단위(전일/오전·오후 반차/오전·오후 반반차).
 // UI "오전 반차" → { unit: "반차", am_pm: "오전" } 매핑. 전일 = am_pm 없음. amount 는 서버 derive(안 보냄).
 // Off Day = 반차만(전일·반반차 옵션 숨김). 제출 성공 시 onSubmitted() 로 /leave/me 재조회.
+//
+// 변경 모드(SPEC-005, WP-004): changeTargetId 가 주어지면 같은 폼을 "변경 재신청"으로 재사용 →
+// POST /leave/requests/{id}/change (body = ErpIntakeIn 동일 필드). 내부적으로 원건 취소 + 재신청 묶음.
 import { useState } from "react";
 import { CalendarPlus } from "lucide-react";
 
@@ -27,13 +30,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type {
-  AmPm,
-  ErpIntakeBody,
-  LeaveCategory,
-  LeaveRequest,
-  LeaveUnit,
-} from "@/types";
+import type { AmPm, ErpIntakeBody, LeaveCategory, LeaveUnit } from "@/types";
 
 const CATEGORY_OPTIONS: { value: LeaveCategory; label: string }[] = [
   { value: "연차", label: "연차" },
@@ -63,11 +60,15 @@ export function LeaveRequestDialog({
   open,
   onOpenChange,
   onSubmitted,
+  changeTargetId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmitted: () => void;
+  // 주어지면 변경 모드 — 이 신청 id 를 원건으로 한 변경 재신청을 제출한다.
+  changeTargetId?: string;
 }) {
+  const isChange = Boolean(changeTargetId);
   const { authedFetch } = useAuth();
   const [category, setCategory] = useState<LeaveCategory>("연차");
   const [unit, setUnit] = useState<string>("전일");
@@ -115,8 +116,12 @@ export function LeaveRequestDialog({
     if (opt.am_pm) body.am_pm = opt.am_pm;
     const trimmed = note.trim();
     if (trimmed) body.note = trimmed;
+    // 변경 = 원건 묶음 변경 요청(/change) / 신규 = 신청 intake. body 형태 동일(ErpIntakeIn).
+    const path = isChange
+      ? `/leave/requests/${changeTargetId}/change`
+      : "/leave/intake";
     try {
-      await authedFetch<LeaveRequest>("/leave/intake", {
+      await authedFetch<unknown>(path, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -128,8 +133,14 @@ export function LeaveRequestDialog({
         err instanceof ApiError
           ? err.status === 422
             ? "입력값을 확인해주세요 (종류·단위·날짜)"
-            : err.message
-          : "신청에 실패했습니다. 잠시 후 다시 시도해주세요",
+            : err.status === 409
+              ? "이미 변경·취소 중인 신청입니다"
+              : err.status === 403
+                ? "본인 신청만 변경할 수 있습니다"
+                : err.message
+          : isChange
+            ? "변경에 실패했습니다. 잠시 후 다시 시도해주세요"
+            : "신청에 실패했습니다. 잠시 후 다시 시도해주세요",
       );
     } finally {
       setSubmitting(false);
@@ -142,10 +153,12 @@ export function LeaveRequestDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <CalendarPlus className="size-[18px] text-brand-500" />
-            연차 신청
+            {isChange ? "연차 변경 재신청" : "연차 신청"}
           </DialogTitle>
           <DialogDescription>
-            소속·성함은 입력하지 않습니다 — 로그인 계정으로 신청됩니다.
+            {isChange
+              ? "원건을 취소하고 새 날짜·종류로 다시 신청합니다 (HR 승인 시 함께 처리)."
+              : "소속·성함은 입력하지 않습니다 — 로그인 계정으로 신청됩니다."}
           </DialogDescription>
         </DialogHeader>
 
@@ -242,7 +255,7 @@ export function LeaveRequestDialog({
             취소
           </Button>
           <Button onClick={onSubmit} disabled={submitting || !useDate}>
-            신청
+            {isChange ? "변경 신청" : "신청"}
           </Button>
         </DialogFooter>
       </DialogContent>

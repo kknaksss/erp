@@ -49,7 +49,13 @@ export interface SyncResult {
 export type LeaveCategory = "연차" | "보상" | "포상" | "Off Day";
 export type LeaveUnit = "전일" | "반차" | "반반차";
 export type AmPm = "오전" | "오후";
-export type RequestStatus = "신청됨" | "승인됨" | "반려됨";
+// 기본 3(SPEC-003) + 취소 2(SPEC-005). 취소요청됨/취소됨 은 GET /leave/me 이력에 섞여 내려온다.
+export type RequestStatus =
+  | "신청됨"
+  | "승인됨"
+  | "반려됨"
+  | "취소요청됨"
+  | "취소됨";
 export type RequestChannel = "slack" | "erp";
 
 // 신청/이력 1건 (LeaveRequestOut). amount 는 서버 derive(문자열) — 입력엔 안 보냄.
@@ -122,4 +128,31 @@ export interface ApprovalResult {
   request: LeaveRequest;
   balance: string; // Decimal 문자열(음수 가능) — 표시 전용
   warning: boolean;
+}
+
+// ---- 변경 = 취소 + 재신청 묶음 (WP-004 Phase 2) — back/app/schemas/leave_request.py 와 정렬 ----
+// 변경은 직원·HR 에게 "변경" 단일 항목으로 보인다("오전 반차 06-20 → 연차 06-22" = original → reapplication).
+
+// 변경 묶음 한 쪽(원건/재신청)의 신청 내용 (ChangeSideOut). 신청자 식별은 묶음 상위에 1번만.
+export interface ChangeSide {
+  id: string;
+  category: LeaveCategory;
+  unit: LeaveUnit;
+  amount: string;
+  am_pm: AmPm | null;
+  use_date: string;
+  note: string | null;
+  status: RequestStatus;
+  channel: RequestChannel;
+  created_at: string;
+}
+
+// HR 변경 큐 1건 (ChangeRequestOut) — change_group_id 가 식별자(승인/반려 경로 키).
+export interface ChangeRequest {
+  change_group_id: string;
+  employee_id: string;
+  employee_name: string;
+  employee_email: string;
+  original: ChangeSide; // 취소 대상 원건(승인됨/신청됨 → 승인 시 취소됨)
+  reapplication: ChangeSide; // ERP 폼 재신청(신청됨 → 승인 시 승인됨)
 }

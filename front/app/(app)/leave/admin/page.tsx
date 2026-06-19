@@ -1,13 +1,19 @@
 "use client";
 
-// 연차관리 /leave/admin (HR 전용, WP-003 Phase 4) — 신청 대기 큐 승인/반려.
-//  - GET /leave/admin/requests (신청됨) → 행별 [승인][반려]
-//  - 승인: POST .../approve → warning=true(차감 후 음수) 경고 토스트(승인은 성공) · 409 이미처리
-//  - 반려: POST .../reject body {reason} — 사유 필수(인라인) · 422/409 처리
-//  - 페이지 가드: 비-HR 직접 진입 → 403 → forbidden degrade(nav 숨김과 이중). directory 패턴.
-// 시안: 21-html/leave-admin-hr.html 의 "처리 대기 큐" 카드. 변경/취소 탭(WP-004)·잔여현황·부여/조정 모달(WP-005)은 범위 밖.
+// 연차관리 /leave/admin (HR 전용, WP-003 Phase 4 + WP-004 Phase 3) — 통합 처리 대기 큐.
+//  - 유형 탭(전체/신규/변경/취소) — 시안 leave-admin-hr.html 의 통합 큐. 카운트 = 전체 대기(필터 무관).
+//  - 신규 큐: GET /leave/admin/requests (신청됨) → [승인](차감, warning=음수 경고) · [반려](사유 필수)
+//  - 취소 큐: GET /leave/admin/cancel-requests (취소요청됨, PendingRequestOut 동형 → 행 컴포넌트 재사용)
+//       · 승인: POST /leave/admin/requests/{id}/cancel-approve → 취소됨 + 원-lot 복원
+//       · 반려: POST /leave/admin/requests/{id}/cancel-reject {reason} → 승인됨 복귀(사유 필수)
+//     ⚠ 실제 배포 경로는 /admin/requests/{id}/cancel-(approve|reject) (태스크 계약표의 /admin/cancel-requests/... 아님 — 코드 SoT).
+//  - 변경 큐: GET /leave/admin/change-requests (ChangeRequestOut) → "원건 → 재신청" 한 항목
+//       · 승인: POST /leave/admin/change-requests/{change_group_id}/approve (원건 취소+복원 + 재신청 승인 한 번에)
+//       · 반려: POST /leave/admin/change-requests/{change_group_id}/reject {reason} (원건 유지·재신청 폐기)
+//  - 페이지 가드: 비-HR → 403 → forbidden degrade(nav 숨김과 이중). directory 패턴.
+// 범위 밖(WP-005): 직원별 잔여현황·보상/포상 부여·연차수 조정·상세 패널.
 import { useCallback, useEffect, useState } from "react";
-import { Check, Inbox, Loader2, ShieldAlert, X } from "lucide-react";
+import { ArrowRight, Check, Inbox, Loader2, ShieldAlert, X } from "lucide-react";
 
 import { AppHeader } from "@/components/app-header";
 import { Badge } from "@/components/ui/badge";
@@ -16,16 +22,48 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { ApprovalResult, LeaveRequest, PendingRequest } from "@/types";
+import type {
+  AmPm,
+  ApprovalResult,
+  ChangeRequest,
+  ChangeSide,
+  LeaveCategory,
+  LeaveRequest,
+  LeaveUnit,
+  PendingRequest,
+} from "@/types";
+
+interface Queues {
+  news: PendingRequest[];
+  cancels: PendingRequest[];
+  changes: ChangeRequest[];
+}
 
 type LoadState =
   | { kind: "loading" }
-  | { kind: "ok"; rows: PendingRequest[] }
+  | { kind: "ok"; queues: Queues }
   | { kind: "forbidden" }
   | { kind: "error"; message: string };
 
+type Tab = "전체" | "신규" | "변경" | "취소";
+const TABS: { key: Tab; label: string }[] = [
+  { key: "전체", label: "전체" },
+  { key: "신규", label: "신규 신청" },
+  { key: "변경", label: "변경" },
+  { key: "취소", label: "취소 요청" },
+];
+
+type QueueItem =
+  | { kind: "new"; key: string; row: PendingRequest }
+  | { kind: "cancel"; key: string; row: PendingRequest }
+  | { kind: "change"; key: string; row: ChangeRequest };
+
 // "사용" 자연어 라벨 — 전일은 종류명, 반차/반반차는 "오전 반차" 식(P3 leave 페이지와 동일 규칙).
-function usageLabel(r: PendingRequest): string {
+function usageLabel(r: {
+  unit: LeaveUnit;
+  am_pm: AmPm | null;
+  category: LeaveCategory;
+}): string {
   if (r.unit === "전일") return r.category;
   return r.am_pm ? `${r.am_pm} ${r.unit}` : r.unit;
 }
@@ -33,17 +71,23 @@ function usageLabel(r: PendingRequest): string {
 export default function LeaveAdminPage() {
   const { authedFetch } = useAuth();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [actingId, setActingId] = useState<string | null>(null);
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("전체");
+  const [actingKey, setActingKey] = useState<string | null>(null);
+  const [rejectingKey, setRejectingKey] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [toast, setToast] = useState<string | null>(null);
 
   // setState 는 await 이후(비동기 연속)라 effect 내 동기 setState 규칙에 안 걸림.
   // 페이지 가드 = directory 패턴: 비-HR 은 BE 가 403 → forbidden degrade(isHr 해석 타이밍 의존 회피).
-  const fetchRows = useCallback(async () => {
+  // 큐 3종을 병렬 조회 — 어느 하나라도 403 이면 비-HR(전체 forbidden).
+  const fetchQueues = useCallback(async () => {
     try {
-      const rows = await authedFetch<PendingRequest[]>("/leave/admin/requests");
-      setState({ kind: "ok", rows });
+      const [news, cancels, changes] = await Promise.all([
+        authedFetch<PendingRequest[]>("/leave/admin/requests"),
+        authedFetch<PendingRequest[]>("/leave/admin/cancel-requests"),
+        authedFetch<ChangeRequest[]>("/leave/admin/change-requests"),
+      ]);
+      setState({ kind: "ok", queues: { news, cancels, changes } });
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
         setState({ kind: "forbidden" });
@@ -53,7 +97,7 @@ export default function LeaveAdminPage() {
           message:
             err instanceof ApiError
               ? err.message
-              : "신청 큐를 불러오지 못했습니다",
+              : "처리 대기 큐를 불러오지 못했습니다",
         });
       }
     }
@@ -61,13 +105,13 @@ export default function LeaveAdminPage() {
 
   const reload = useCallback(() => {
     setState({ kind: "loading" });
-    fetchRows();
-  }, [fetchRows]);
+    fetchQueues();
+  }, [fetchQueues]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    fetchRows();
-  }, [fetchRows]);
+    fetchQueues();
+  }, [fetchQueues]);
 
   // 토스트 자동 소거
   useEffect(() => {
@@ -76,8 +120,10 @@ export default function LeaveAdminPage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  async function onApprove(row: PendingRequest) {
-    setActingId(row.id);
+  // ---- 액션 핸들러 (성공·실패 모두 재조회로 큐 정합) ------------------------
+
+  async function onNewApprove(row: PendingRequest, key: string) {
+    setActingKey(key);
     try {
       const res = await authedFetch<ApprovalResult>(
         `/leave/admin/requests/${row.id}/approve`,
@@ -88,45 +134,123 @@ export default function LeaveAdminPage() {
           ? `${row.employee_name} 승인 완료 — 차감 후 ${row.category} 잔여 음수(${res.balance}일)`
           : `${row.employee_name} 신청을 승인했습니다`,
       );
-      await fetchRows();
+      await fetchQueues();
     } catch (err) {
-      setToast(approveErrorMessage(err));
-      await fetchRows(); // 409/404 면 큐에서 빠지도록 재조회
+      setToast(actionErrorMessage(err, "승인"));
+      await fetchQueues();
     } finally {
-      setActingId(null);
+      setActingKey(null);
     }
   }
 
-  function openReject(row: PendingRequest) {
-    setRejectingId(row.id);
+  async function onCancelApprove(row: PendingRequest, key: string) {
+    setActingKey(key);
+    try {
+      await authedFetch<LeaveRequest>(
+        `/leave/admin/requests/${row.id}/cancel-approve`,
+        { method: "POST" },
+      );
+      setToast(`${row.employee_name} 취소를 승인했습니다 (잔여 복원)`);
+      await fetchQueues();
+    } catch (err) {
+      setToast(actionErrorMessage(err, "취소 승인"));
+      await fetchQueues();
+    } finally {
+      setActingKey(null);
+    }
+  }
+
+  async function onChangeApprove(item: ChangeRequest, key: string) {
+    setActingKey(key);
+    try {
+      await authedFetch<ChangeRequest>(
+        `/leave/admin/change-requests/${item.change_group_id}/approve`,
+        { method: "POST" },
+      );
+      setToast(`${item.employee_name} 변경을 승인했습니다`);
+      await fetchQueues();
+    } catch (err) {
+      setToast(actionErrorMessage(err, "변경 승인"));
+      await fetchQueues();
+    } finally {
+      setActingKey(null);
+    }
+  }
+
+  // 반려 — 한 인라인 입력으로 신규/취소/변경 공용. confirm 시 item.kind 로 분기.
+  function openReject(key: string) {
+    setRejectingKey(key);
     setRejectReason("");
   }
 
-  async function onRejectConfirm(row: PendingRequest) {
+  async function onRejectConfirm(item: QueueItem) {
     const reason = rejectReason.trim();
     if (!reason) {
       setToast("반려 사유를 입력해주세요");
       return;
     }
-    setActingId(row.id);
+    setActingKey(item.key);
     try {
-      await authedFetch<LeaveRequest>(
-        `/leave/admin/requests/${row.id}/reject`,
-        { method: "POST", body: JSON.stringify({ reason }) },
-      );
-      setToast(`${row.employee_name} 신청을 반려했습니다`);
-      setRejectingId(null);
+      if (item.kind === "new") {
+        await authedFetch<LeaveRequest>(
+          `/leave/admin/requests/${item.row.id}/reject`,
+          { method: "POST", body: JSON.stringify({ reason }) },
+        );
+        setToast(`${item.row.employee_name} 신청을 반려했습니다`);
+      } else if (item.kind === "cancel") {
+        await authedFetch<LeaveRequest>(
+          `/leave/admin/requests/${item.row.id}/cancel-reject`,
+          { method: "POST", body: JSON.stringify({ reason }) },
+        );
+        setToast(`${item.row.employee_name} 취소 요청을 반려했습니다 (승인됨 복귀)`);
+      } else {
+        await authedFetch<ChangeRequest>(
+          `/leave/admin/change-requests/${item.row.change_group_id}/reject`,
+          { method: "POST", body: JSON.stringify({ reason }) },
+        );
+        setToast(`${item.row.employee_name} 변경을 반려했습니다 (원건 유지)`);
+      }
+      setRejectingKey(null);
       setRejectReason("");
-      await fetchRows();
+      await fetchQueues();
     } catch (err) {
-      setToast(rejectErrorMessage(err));
-      await fetchRows();
+      setToast(actionErrorMessage(err, "반려"));
+      await fetchQueues();
     } finally {
-      setActingId(null);
+      setActingKey(null);
     }
   }
 
-  const rows = state.kind === "ok" ? state.rows : [];
+  // 통합 큐 아이템 — 전체 = 신규 + 변경 + 취소 합본(시안 통합 큐).
+  const queues = state.kind === "ok" ? state.queues : null;
+  const items: QueueItem[] = queues
+    ? [
+        ...queues.news.map(
+          (row): QueueItem => ({ kind: "new", key: `new:${row.id}`, row }),
+        ),
+        ...queues.changes.map(
+          (row): QueueItem => ({
+            kind: "change",
+            key: `change:${row.change_group_id}`,
+            row,
+          }),
+        ),
+        ...queues.cancels.map(
+          (row): QueueItem => ({
+            kind: "cancel",
+            key: `cancel:${row.id}`,
+            row,
+          }),
+        ),
+      ]
+    : [];
+  const total = items.length;
+  const visible = items.filter((it) => {
+    if (tab === "전체") return true;
+    if (tab === "신규") return it.kind === "new";
+    if (tab === "변경") return it.kind === "change";
+    return it.kind === "cancel";
+  });
 
   return (
     <>
@@ -173,60 +297,72 @@ export default function LeaveAdminPage() {
                   </span>
                   <span className="text-[12px] text-mgray-500">
                     대기{" "}
-                    <span className="font-semibold text-mgray-700">
-                      {rows.length}
-                    </span>
+                    <span className="font-semibold text-mgray-700">{total}</span>
                     건
                   </span>
-                  <Badge variant="neutral">Slack + ERP intake</Badge>
+                  <Badge variant="neutral">신규 · 변경 · 취소</Badge>
                 </div>
                 <span className="text-[11px] text-mgray-500">
                   1 신청 = 하루치
                 </span>
               </div>
 
-              {rows.length === 0 ? (
+              {/* 유형 탭 — 카운트는 전체 대기(필터 무관) */}
+              <div className="flex items-center gap-1.5 border-b border-mgray-100 px-5 py-2.5">
+                {TABS.map((t) => {
+                  const on = tab === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => setTab(t.key)}
+                      className={
+                        on
+                          ? "rounded-full border border-brand-500 bg-brand-500 px-3 py-1 text-[11px] font-medium text-white"
+                          : "rounded-full border border-mgray-200 px-3 py-1 text-[11px] font-medium text-mgray-600 hover:bg-mgray-50"
+                      }
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {visible.length === 0 ? (
                 <div className="px-5 py-12 text-center text-[13px] text-mgray-400">
                   대기 중인 항목이 없습니다
                 </div>
               ) : (
                 <div className="divide-y divide-mgray-100">
-                  {rows.map((row) => {
-                    const busy = actingId === row.id;
+                  {visible.map((item) => {
+                    const busy = actingKey === item.key;
+                    const rejecting = rejectingKey === item.key;
                     return (
-                      <div key={row.id} className="px-5 py-3.5">
+                      <div key={item.key} className="px-5 py-3.5">
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 text-sm font-semibold text-mgray-800">
-                              <Badge variant="default" className="px-1.5">
-                                신규
-                              </Badge>
-                              <span className="truncate">
-                                {row.employee_name}
-                              </span>
-                              <span className="truncate text-[11px] font-normal text-mgray-500">
-                                {row.employee_email}
-                              </span>
-                            </div>
-                            <div className="mt-1 flex flex-wrap items-center gap-2">
-                              <Badge variant="neutral">{usageLabel(row)}</Badge>
-                              <span className="text-[12px] text-mgray-600">
-                                {row.use_date} · {row.amount}일 · {row.category}
-                              </span>
-                            </div>
-                            {row.note ? (
-                              <p className="mt-1 text-[12px] text-mgray-500">
-                                사유: {row.note}
-                              </p>
-                            ) : null}
+                            {item.kind === "change" ? (
+                              <ChangeSummary row={item.row} />
+                            ) : (
+                              <PendingSummary
+                                row={item.row}
+                                kind={item.kind}
+                              />
+                            )}
                           </div>
                           <div className="flex shrink-0 items-center gap-1.5">
                             <Button
                               size="sm"
-                              onClick={() => onApprove(row)}
+                              onClick={() => {
+                                if (item.kind === "new")
+                                  onNewApprove(item.row, item.key);
+                                else if (item.kind === "cancel")
+                                  onCancelApprove(item.row, item.key);
+                                else onChangeApprove(item.row, item.key);
+                              }}
                               disabled={busy}
                             >
-                              {busy && rejectingId !== row.id ? (
+                              {busy && !rejecting ? (
                                 <Loader2 className="animate-spin" />
                               ) : (
                                 <Check />
@@ -236,7 +372,7 @@ export default function LeaveAdminPage() {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => openReject(row)}
+                              onClick={() => openReject(item.key)}
                               disabled={busy}
                               className="text-mred-500"
                             >
@@ -246,19 +382,25 @@ export default function LeaveAdminPage() {
                           </div>
                         </div>
 
-                        {rejectingId === row.id ? (
+                        {rejecting ? (
                           <div className="mt-2 flex items-center gap-2">
                             <Input
                               autoFocus
                               value={rejectReason}
                               onChange={(e) => setRejectReason(e.target.value)}
-                              placeholder="반려 사유 (필수)"
+                              placeholder={
+                                item.kind === "cancel"
+                                  ? "반려 사유 (필수) · 반려 시 승인됨 복귀"
+                                  : item.kind === "change"
+                                    ? "반려 사유 (필수) · 반려 시 원건 유지"
+                                    : "반려 사유 (필수)"
+                              }
                               className="flex-1"
                             />
                             <Button
                               size="sm"
                               variant="destructive"
-                              onClick={() => onRejectConfirm(row)}
+                              onClick={() => onRejectConfirm(item)}
                               disabled={busy}
                             >
                               반려 확정
@@ -266,7 +408,7 @@ export default function LeaveAdminPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => setRejectingId(null)}
+                              onClick={() => setRejectingKey(null)}
                               disabled={busy}
                             >
                               닫기
@@ -295,21 +437,76 @@ export default function LeaveAdminPage() {
   );
 }
 
-function approveErrorMessage(err: unknown): string {
-  if (err instanceof ApiError) {
-    if (err.status === 409) return "이미 처리된 신청입니다";
-    if (err.status === 404) return "신청을 찾을 수 없습니다 (이미 처리됨)";
-    return err.message;
-  }
-  return "승인에 실패했습니다. 잠시 후 다시 시도해주세요";
+// 신규·취소 행 요약 — PendingRequestOut 동형이라 한 컴포넌트로 재사용(유형 배지만 분기).
+function PendingSummary({
+  row,
+  kind,
+}: {
+  row: PendingRequest;
+  kind: "new" | "cancel";
+}) {
+  return (
+    <>
+      <div className="flex items-center gap-1.5 text-sm font-semibold text-mgray-800">
+        <Badge variant={kind === "new" ? "default" : "destructive"} className="px-1.5">
+          {kind === "new" ? "신규" : "취소"}
+        </Badge>
+        <span className="truncate">{row.employee_name}</span>
+        <span className="truncate text-[11px] font-normal text-mgray-500">
+          {row.employee_email}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        <Badge variant="neutral">{usageLabel(row)}</Badge>
+        <span className="text-[12px] text-mgray-600">
+          {row.use_date} · {row.amount}일 · {row.category}
+        </span>
+      </div>
+      {row.note ? (
+        <p className="mt-1 text-[12px] text-mgray-500">사유: {row.note}</p>
+      ) : null}
+    </>
+  );
 }
 
-function rejectErrorMessage(err: unknown): string {
+// 변경 행 요약 — "원건 → 재신청" 한 항목(시안: 오전 반차 06-20 → 연차 06-22).
+function ChangeSummary({ row }: { row: ChangeRequest }) {
+  return (
+    <>
+      <div className="flex items-center gap-1.5 text-sm font-semibold text-mgray-800">
+        <Badge variant="warning" className="px-1.5">
+          변경
+        </Badge>
+        <span className="truncate">{row.employee_name}</span>
+        <span className="truncate text-[11px] font-normal text-mgray-500">
+          {row.employee_email}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px]">
+        <Badge variant="neutral" className="line-through">
+          {usageLabel(row.original)}
+        </Badge>
+        <span className="text-mgray-400 line-through">
+          {sideDetail(row.original)}
+        </span>
+        <ArrowRight className="size-3.5 text-mgray-400" />
+        <Badge variant="neutral">{usageLabel(row.reapplication)}</Badge>
+        <span className="text-mgray-600">{sideDetail(row.reapplication)}</span>
+      </div>
+    </>
+  );
+}
+
+function sideDetail(s: ChangeSide): string {
+  return `${s.use_date} · ${s.amount}일 · ${s.category}`;
+}
+
+function actionErrorMessage(err: unknown, verb: string): string {
   if (err instanceof ApiError) {
     if (err.status === 422) return "반려 사유를 입력해주세요";
-    if (err.status === 409) return "이미 처리된 신청입니다";
-    if (err.status === 404) return "신청을 찾을 수 없습니다 (이미 처리됨)";
+    if (err.status === 409) return "이미 처리된 항목입니다";
+    if (err.status === 404) return "항목을 찾을 수 없습니다 (이미 처리됨)";
     return err.message;
   }
-  return "반려에 실패했습니다. 잠시 후 다시 시도해주세요";
+  return `${verb}에 실패했습니다. 잠시 후 다시 시도해주세요`;
 }
