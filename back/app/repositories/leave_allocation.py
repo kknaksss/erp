@@ -28,6 +28,26 @@ async def create(
     return alloc
 
 
+async def list_active_for_request(
+    session: AsyncSession, request_id: UUID
+) -> list[LeaveAllocation]:
+    """복원 역산 대상 — 해당 신청의 **미처리** allocation(restored_at·expired_at 둘 다 NULL).
+
+    WP-004 Phase 1 취소 승인 복원: 이미 복원(`restored_at`)·만료소멸(`expired_at`)된 건은
+    제외해 **이중 복원 방지**(idempotent — restored/expired 둘 다 NULL 인 것만 역산). created_at ASC.
+    """
+    stmt = (
+        select(LeaveAllocation)
+        .where(
+            LeaveAllocation.request_id == request_id,
+            LeaveAllocation.restored_at.is_(None),
+            LeaveAllocation.expired_at.is_(None),
+        )
+        .order_by(LeaveAllocation.created_at.asc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
 async def sum_for_request(session: AsyncSession, request_id: UUID) -> Decimal:
     """해당 신청 차감 총량 — `sum(amount) WHERE request_id`(domains §합 일치 교차검증)."""
     stmt = select(func.coalesce(func.sum(LeaveAllocation.amount), 0)).where(

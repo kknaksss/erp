@@ -10,8 +10,14 @@ WP-003 Phase 2 (HR — `department == "hr"` 게이트):
 - POST /leave/admin/requests/{id}/approve     — 승인 → 선택 종류 FEFO 차감(음수 허용·경고).
 - POST /leave/admin/requests/{id}/reject      — 반려 → `반려됨`(사유 필수·차감 없음).
 
-취소·변경(WP-004)·HR 부여(WP-005)는 이 라우터 범위 밖. service 가 생성/처리 후 commit
-(roster/leave_balance 와 동일 — service-commits 컨벤션), 라우터는 응답 매핑만.
+WP-004 Phase 1 (취소 전이 + 원-lot 복원):
+- POST /leave/requests/{id}/cancel             — 개인 취소(본인): 신청됨=자유취소·승인됨=취소요청.
+- GET  /leave/admin/cancel-requests            — HR 취소 승인 큐(`취소요청됨`, 신청 큐와 별도).
+- POST /leave/admin/requests/{id}/cancel-approve — 취소승인 → `취소됨`+soft delete+원-lot 복원.
+- POST /leave/admin/requests/{id}/cancel-reject  — 취소반려 → `승인됨` 복귀(사유 필수·휴가 유지).
+
+변경 묶음(WP-004 Phase 2)·FE(Phase 3)·HR 부여(WP-005)는 이 라우터 범위 밖. service 가 생성/처리
+후 commit(roster/leave_balance 와 동일 — service-commits 컨벤션), 라우터는 응답 매핑만.
 """
 
 from typing import Annotated
@@ -24,6 +30,7 @@ from app.core.deps import get_current_employee, get_db, require_hr
 from app.models.employee import Employee
 from app.schemas.leave_request import (
     ApprovalOut,
+    CancelIn,
     ErpIntakeIn,
     ExpiringLotOut,
     LeaveRequestOut,
@@ -32,7 +39,26 @@ from app.schemas.leave_request import (
     RejectIn,
     SlackIntakeIn,
 )
-from app.services import leave_approval, leave_intake, leave_self
+from app.services import leave_approval, leave_cancel, leave_intake, leave_self
+
+
+def _to_pending_out(req, emp) -> PendingRequestOut:
+    """`신청됨`/`취소요청됨` 큐 행 → 신청 내용 + 신청자(이름/email) DTO(WP-003/004 공용)."""
+    return PendingRequestOut(
+        id=req.id,
+        employee_id=req.employee_id,
+        employee_name=emp.name,
+        employee_email=emp.email,
+        category=req.category,
+        unit=req.unit,
+        amount=req.amount,
+        am_pm=req.am_pm,
+        use_date=req.use_date,
+        note=req.note,
+        status=req.status,
+        channel=req.channel,
+        created_at=req.created_at,
+    )
 
 router = APIRouter(prefix="/leave", tags=["leave"])
 
@@ -87,24 +113,7 @@ async def pending_requests(
 ) -> list[PendingRequestOut]:
     """신청 큐 = `신청됨` 전 직원 + 신청자(이름/email). 비-HR 403·토큰없음 401."""
     rows = await leave_approval.pending_queue(session)
-    return [
-        PendingRequestOut(
-            id=req.id,
-            employee_id=req.employee_id,
-            employee_name=emp.name,
-            employee_email=emp.email,
-            category=req.category,
-            unit=req.unit,
-            amount=req.amount,
-            am_pm=req.am_pm,
-            use_date=req.use_date,
-            note=req.note,
-            status=req.status,
-            channel=req.channel,
-            created_at=req.created_at,
-        )
-        for req, emp in rows
-    ]
+    return [_to_pending_out(req, emp) for req, emp in rows]
 
 
 @router.post("/admin/requests/{request_id}/approve", response_model=ApprovalOut)
@@ -132,4 +141,61 @@ async def reject_request(
 ) -> LeaveRequestOut:
     """반려 → `반려됨` + 사유(필수, 누락/공백 422). 차감 없음. 없음 404·이미 처리 409·비-HR 403."""
     req = await leave_approval.reject(session, hr, request_id, payload.reason)
+    return LeaveRequestOut.model_validate(req)
+
+
+# ---- 취소·취소요청·취소승인/반려 (WP-004 Phase 1) -------------------------
+
+
+@router.post("/requests/{request_id}/cancel", response_model=LeaveRequestOut)
+async def cancel_request(
+    request_id: UUID,
+    payload: CancelIn,
+    employee: Annotated[Employee, Depends(get_current_employee)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestOut:
+    """개인 취소(본인) — `신청됨`=즉시 `취소됨`+soft delete / `승인됨`=`취소요청됨`(HR 큐).
+
+    그 외 상태 재취소 409·타인 신청 403·없음 404·토큰없음 401. reason 선택(cancel_reason).
+    """
+    req = await leave_cancel.request_cancel(session, employee, request_id, payload.reason)
+    return LeaveRequestOut.model_validate(req)
+
+
+@router.get("/admin/cancel-requests", response_model=list[PendingRequestOut])
+async def cancel_requests_queue(
+    _hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> list[PendingRequestOut]:
+    """HR 취소 승인 큐 = `취소요청됨` 전 직원 + 신청자. 신청 큐(`/admin/requests`)와 별도. 비-HR 403."""
+    rows = await leave_cancel.cancel_queue(session)
+    return [_to_pending_out(req, emp) for req, emp in rows]
+
+
+@router.post("/admin/requests/{request_id}/cancel-approve", response_model=LeaveRequestOut)
+async def approve_cancel_request(
+    request_id: UUID,
+    hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestOut:
+    """취소승인 → `취소됨` + soft delete + 원-lot 복원(만료 lot=만료소멸).
+
+    없음 404·`취소요청됨` 아니면 409(이중 복원 차단)·비-HR 403.
+    """
+    req = await leave_cancel.approve_cancel(session, hr, request_id)
+    return LeaveRequestOut.model_validate(req)
+
+
+@router.post("/admin/requests/{request_id}/cancel-reject", response_model=LeaveRequestOut)
+async def reject_cancel_request(
+    request_id: UUID,
+    payload: RejectIn,
+    hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> LeaveRequestOut:
+    """취소반려 → `승인됨` 복귀 + 사유(필수, 누락/공백 422). 휴가 유지(복원 없음).
+
+    없음 404·`취소요청됨` 아니면 409·비-HR 403.
+    """
+    req = await leave_cancel.reject_cancel(session, hr, request_id, payload.reason)
     return LeaveRequestOut.model_validate(req)

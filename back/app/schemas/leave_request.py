@@ -106,3 +106,16 @@ class ApprovalOut(BaseModel):
     request: LeaveRequestOut
     balance: Decimal  # 차감 후 해당 category 잔여(음수 가능)
     warning: bool  # balance < 0 (SPEC-003 §케이스 매트릭스 음수 경고)
+
+
+# ---- 취소·취소요청·취소승인/반려 (WP-004 Phase 1) -------------------------
+
+
+class CancelIn(BaseModel):
+    """개인 취소·취소요청 입력 — `reason` 선택(SPEC-005 §API 입력 = 신청 id, 사유는 옵션).
+
+    `신청됨` 자유취소 / `승인됨` 취소요청 공용. cancel_reason 컬럼에 저장(누락 시 NULL).
+    """
+
+    reason: str | None = None
+    model_config = ConfigDict(str_strip_whitespace=True)

@@ -82,6 +82,11 @@ async def exists_lot_for_year(
     return (await session.execute(stmt)).first() is not None
 
 
+async def get_by_id(session: AsyncSession, grant_id: UUID) -> LeaveGrant | None:
+    """단건 lot 조회 — 취소 복원 역산(allocation → 원 lot remaining 환원, WP-004 P1)."""
+    return await session.get(LeaveGrant, grant_id)
+
+
 async def sum_category_remaining(
     session: AsyncSession, employee_id: UUID, category: LeaveCategory
 ) -> Decimal:

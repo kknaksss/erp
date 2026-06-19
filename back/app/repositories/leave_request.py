@@ -102,6 +102,25 @@ async def list_pending(
     return [(req, emp) for req, emp in rows]
 
 
+async def list_cancel_requested(
+    session: AsyncSession,
+) -> list[tuple[LeaveRequest, Employee]]:
+    """HR 취소 승인 큐 = `취소요청됨` 전 직원 + 신청자(employee) 조인. 사용일 ASC·동률 created_at ASC.
+
+    WP-004 Phase 1 — `신청됨` 신청 큐(`list_pending`)와 **별도 조회**(WP-003 계약 불변 유지).
+    partial index `(status) WHERE IN(신청됨,취소요청됨)` 를 공유한다. 처리분(취소승인/반려)은
+    status 변경(`취소됨`/`승인됨`)으로 자연 제외 → 이력.
+    """
+    stmt = (
+        select(LeaveRequest, Employee)
+        .join(Employee, LeaveRequest.employee_id == Employee.id)
+        .where(LeaveRequest.status == RequestStatus.CANCEL_REQUESTED)
+        .order_by(LeaveRequest.use_date.asc(), LeaveRequest.created_at.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+    return [(req, emp) for req, emp in rows]
+
+
 async def list_for_employee(
     session: AsyncSession, employee_id: UUID
 ) -> list[LeaveRequest]:
