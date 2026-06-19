@@ -10,13 +10,13 @@
 //  - 변경 큐: GET /leave/admin/change-requests (ChangeRequestOut) → "원건 → 재신청" 한 항목
 //       · 승인/반려: POST /leave/admin/change-requests/{change_group_id}/(approve|reject)
 //  [HR 운영 — WP-005 P3]
-//  - 직원별 잔여 현황(좌): GET /admin/employees 명부 + 각 직원 GET /leave/admin/employees/{id} 상세를
+//  - 직원별 잔여 현황(좌): GET /leave/admin/employees 명부 + 각 직원 GET /leave/admin/employees/{id} 상세를
 //    fan-out 로 모아 종류별 잔여 4+전체 표시(부서 필터·행 클릭 선택). 음수 잔여 = 빨강.
 //  - 상세 연차 현황(우): 선택 직원의 잔여 카드 4+전체 + 이력(ledger 시계열, 음수 경고).
 //  - 연차수 조정: 상세 패널 → 모달(종류별 ± 다건) → POST /leave/admin/adjustments.
 //  - 벌크 부여: 헤더 → 모달(다중 직원·부서 필터·종류·일수·만료·default) → POST /leave/admin/grants.
-//  ⚠ 권한 축 분리: 큐/부여/조정/상세 = require_hr, 그러나 /admin/employees = require_admin.
-//    member-role HR 은 명부 403 → 좌/우 운영 패널만 degrade(큐는 정상). 리포트 이슈 참조.
+//  ⚠ 권한 축: 큐/부여/조정/상세 + 명부 모두 require_hr(/leave/admin/employees = department=="hr" 면 role 무관 200).
+//    member-role HR 도 명부 200 — degrade 해소(WP-005 권한 갭 보강). forbidden 분기는 진짜 비-HR 방어용으로 유지.
 //  - 페이지 가드: 큐 403 = 비-HR → forbidden degrade(nav 숨김과 이중). directory 패턴.
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -68,7 +68,7 @@ type LoadState =
   | { kind: "forbidden" }
   | { kind: "error"; message: string };
 
-// 직원별 잔여 현황 — 큐와 독립 축(/admin/employees = require_admin). member-HR 은 forbidden degrade.
+// 직원별 잔여 현황 — /leave/admin/employees = require_hr(member-HR 200). forbidden 은 진짜 비-HR 방어.
 type RosterState =
   | { kind: "loading" }
   | {
@@ -148,10 +148,10 @@ export default function LeaveAdminPage() {
   }, [authedFetch]);
 
   // 명부 + 각 직원 상세 fan-out(소규모 조직 — Promise.allSettled 로 일부 실패 허용).
-  // /admin/employees = require_admin → member-HR 403 = forbidden degrade(큐와 별개 축).
+  // /leave/admin/employees = require_hr → member-HR 200(department=="hr"). forbidden = 진짜 비-HR 방어.
   const loadRoster = useCallback(async () => {
     try {
-      const rows = await authedFetch<Employee[]>("/admin/employees");
+      const rows = await authedFetch<Employee[]>("/leave/admin/employees");
       // BE 는 en_US collation 정렬 → 한글 가나다순 재정렬(directory 와 동일).
       const sorted = [...rows].sort((a, b) => a.name.localeCompare(b.name, "ko"));
       const results = await Promise.allSettled(
