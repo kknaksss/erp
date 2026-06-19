@@ -33,6 +33,11 @@ from app.core.deps import get_current_employee, get_db, require_hr
 from app.models.employee import Employee
 from app.repositories import employee as employee_repo
 from app.schemas.leave_adjustment import LeaveAdjustmentIn, LeaveAdjustmentOut
+from app.schemas.leave_admin import (
+    EmployeeIdentityOut,
+    EmployeeLeaveDetailOut,
+    LedgerEntryOut,
+)
 from app.schemas.leave_grant import BulkGrantIn, BulkGrantOut
 from app.schemas.leave_request import (
     ApprovalOut,
@@ -49,6 +54,7 @@ from app.schemas.leave_request import (
 )
 from app.services import (
     leave_adjustment,
+    leave_admin,
     leave_approval,
     leave_cancel,
     leave_change,
@@ -330,3 +336,26 @@ async def adjust_leave(
     delta 를 합산해 자동 반영(이중 반영 없음).
     """
     return await leave_adjustment.adjust(session, hr, payload)
+
+
+# ---- HR 상세 연차 현황 — 임의 직원 (WP-005 Phase 3 BE — require_hr) -------
+
+
+@router.get("/admin/employees/{employee_id}", response_model=EmployeeLeaveDetailOut)
+async def employee_leave_detail(
+    employee_id: UUID,
+    _hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> EmployeeLeaveDetailOut:
+    """HR 이 임의 직원의 종류별 잔여(4+전체) + 사용/부여/조정 이력 열람. 비-HR 403·토큰없음 401.
+
+    미존재 직원 404(비활성은 조회 가능 — 이력 열람 목적). 음수 잔여도 그대로 노출(차단 X·경고는
+    FE). read-only — 잔여 derive·ledger union view 를 employee_id 로 조회만(재정의 없음).
+    """
+    emp, balances, total, ledger = await leave_admin.employee_detail(session, employee_id)
+    return EmployeeLeaveDetailOut(
+        employee=EmployeeIdentityOut.model_validate(emp),
+        balances=balances,
+        total=total,
+        ledger=[LedgerEntryOut.model_validate(entry) for entry in ledger],
+    )
