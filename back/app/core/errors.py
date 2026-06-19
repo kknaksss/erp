@@ -58,3 +58,14 @@ class InvalidLeaveRequestError(AppError):
     error_code = "INVALID_LEAVE_REQUEST"
     status_code = 422
     message = "연차 신청 내용이 올바르지 않습니다"
+
+
+class InvalidBulkGrantError(AppError):
+    """HR 벌크 부여 invariant 위반(종류 게이트·일수>0·보상/포상 만료 필수·비활성 대상 등).
+
+    `detail` 에 실패 원인·해당 employee id 를 실어 보낸다(전체/롤백이라 HR 이 선택을 정정하게).
+    """
+
+    error_code = "INVALID_BULK_GRANT"
+    status_code = 422
+    message = "벌크 부여 내용이 올바르지 않습니다"

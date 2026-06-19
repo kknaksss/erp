@@ -80,3 +80,15 @@ async def list_active(session: AsyncSession) -> list[Employee]:
         select(Employee).where(Employee.active.is_(True)).order_by(Employee.name)
     )
     return list(result.scalars().all())
+
+
+async def list_by_ids(session: AsyncSession, ids: list[UUID]) -> list[Employee]:
+    """주어진 id 들의 employee 다건 조회 (HR 벌크 부여 대상 검증 — 존재/active 판정).
+
+    반환 순서·완전성 보장 안 함(빠진 id = 미존재). 호출 service 가 입력 id 집합과 대조해
+    미존재(404)·비활성(422)을 판정한다. 빈 입력은 빈 결과.
+    """
+    if not ids:
+        return []
+    result = await session.execute(select(Employee).where(Employee.id.in_(ids)))
+    return list(result.scalars().all())

@@ -16,8 +16,11 @@ WP-004 Phase 1 (취소 전이 + 원-lot 복원):
 - POST /leave/admin/requests/{id}/cancel-approve — 취소승인 → `취소됨`+soft delete+원-lot 복원.
 - POST /leave/admin/requests/{id}/cancel-reject  — 취소반려 → `승인됨` 복귀(사유 필수·휴가 유지).
 
-변경 묶음(WP-004 Phase 2)·FE(Phase 3)·HR 부여(WP-005)는 이 라우터 범위 밖. service 가 생성/처리
-후 commit(roster/leave_balance 와 동일 — service-commits 컨벤션), 라우터는 응답 매핑만.
+WP-005 Phase 1 (HR 벌크 부여 — `department == "hr"` 게이트):
+- POST /leave/admin/grants — 보상/포상/Off Day 를 다중 직원에게 한 번에 부여(전체/롤백).
+
+연차수 조정·상세 조회(WP-005 P2/P3)·FE 는 이 라우터 범위 밖. service 가 생성/처리 후
+commit(roster/leave_balance 와 동일 — service-commits 컨벤션), 라우터는 응답 매핑만.
 """
 
 from typing import Annotated
@@ -29,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_employee, get_db, require_hr
 from app.models.employee import Employee
 from app.repositories import employee as employee_repo
+from app.schemas.leave_grant import BulkGrantIn, BulkGrantOut
 from app.schemas.leave_request import (
     ApprovalOut,
     CancelIn,
@@ -46,6 +50,7 @@ from app.services import (
     leave_approval,
     leave_cancel,
     leave_change,
+    leave_grant_ops,
     leave_intake,
     leave_self,
 )
@@ -288,3 +293,20 @@ async def reject_change_request(
     )
     emp = await employee_repo.get_by_id(session, original.employee_id)
     return _to_change_out(original, reapplication, emp)
+
+
+# ---- HR 벌크 부여 (WP-005 Phase 1 — require_hr) ---------------------------
+
+
+@router.post("/admin/grants", response_model=BulkGrantOut)
+async def bulk_grant(
+    payload: BulkGrantIn,
+    hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> BulkGrantOut:
+    """보상/포상/Off Day 를 다중 직원에게 한 번에 부여(전체/롤백). 비-HR 403·토큰없음 401.
+
+    종류 게이트(연차 거부)·일수>0·보상/포상 만료 필수·Off Day default(0.5·그달 말일) 위반 422 ·
+    미존재 대상 404 · 비활성 대상 422(부분 무시 없음). 빈 대상 리스트 422(스키마).
+    """
+    return await leave_grant_ops.bulk_grant(session, hr, payload)
