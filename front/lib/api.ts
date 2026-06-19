@@ -11,6 +11,8 @@ export class ApiError extends Error {
     public status: number,
     public errorCode: string,
     message: string,
+    // ERP-native 422 의 detail(예: 벌크 부여의 { missing, inactive }) — 핸들러에서 UX 분기용.
+    public detail?: unknown,
   ) {
     super(message);
   }
@@ -30,11 +32,16 @@ export async function toApiError(res: Response): Promise<ApiError> {
       med.message ?? res.statusText,
     );
   }
-  const erp = body as { error_code?: string; message?: string };
+  const erp = body as {
+    error_code?: string;
+    message?: string;
+    detail?: unknown;
+  };
   return new ApiError(
     res.status,
     erp.error_code ?? "UNKNOWN",
     erp.message ?? res.statusText,
+    erp.detail,
   );
 }
 
