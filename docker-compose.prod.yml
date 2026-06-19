@@ -1,0 +1,33 @@
+# ERP back prod compose — mediness prod 서버 동거(같은 docker 호스트).
+#   인증=mediness 위임 + DB=mediness-pg 공유 erp database 이므로 mediness compose 의
+#   default network(`mediness-app_default`)에 external 로 합류 → container_name 으로 내부 통신.
+#   env_file: .env.prod (gitignore — .env.prod.example 복사 후 실값 기입).
+#
+# 사전 작업(호스트):
+#   1) mediness-pg 에 erp database 생성:  docker exec mediness-pg psql -U <user> -c "CREATE DATABASE erp;"
+#   2) cp .env.prod.example .env.prod  → 실값 기입(아래 example 참조)
+#   3) docker compose -f docker-compose.prod.yml up -d --build
+#   FE(Next.js)는 Vercel 배포(설계 락) — 본 compose 는 BE 만.
+
+services:
+  erp-back:
+    # CI(GH Actions deploy.yml)가 GHCR 에 빌드-푸시 → 서버는 pull 만.
+    image: ghcr.io/kknaksss/erp-back:${IMAGE_TAG:-latest}
+    # 로컬 빌드 테스트: docker compose -f docker-compose.prod.yml build
+    # build:
+    #   context: ./back
+    #   dockerfile: Dockerfile
+    container_name: erp-back
+    restart: unless-stopped
+    env_file: .env.prod
+    ports:
+      - "28082:28082"
+    networks:
+      - mediness
+
+networks:
+  # mediness prod compose 가 만든 default network 에 합류(external).
+  # 실제 이름 확인: docker network ls | grep mediness  (보통 <compose-dir>_default = mediness-app_default)
+  mediness:
+    external: true
+    name: mediness-app_default

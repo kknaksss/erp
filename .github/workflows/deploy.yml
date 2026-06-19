@@ -1,0 +1,126 @@
+name: Deploy ERP to homeserver
+
+# ERP back 전용 배포(FE=Next.js 는 Vercel 별도). mediness deploy.yml 패턴.
+#   빌드: GHCR 에 erp-back:{sha,latest} push → 서버 SSH 접속 → .env.prod(GH Secret) 작성 → compose pull+up.
+#   사전: mediness prod compose 가 같은 서버에 떠있어 network(mediness-app_default)·mediness-pg 존재 + erp DB 생성.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'back/**'
+      - 'docker-compose.prod.yml'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'GHCR image tag (default: latest) — 롤백 시 이전 SHA 입력'
+        required: false
+        default: ''
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: kknaksss
+
+jobs:
+  build-back:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: ./back
+          file: ./back/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/erp-back:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.OWNER }}/erp-back:latest
+          cache-from: type=gha,scope=erp-back
+          cache-to: type=gha,scope=erp-back,mode=max
+
+  deploy:
+    needs: build-back
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      # Step 1 — 배포 디렉토리 (~/erp)
+      - name: 1) Prepare directory
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HOMESERVER_HOST }}
+          username: ${{ secrets.HOMESERVER_USER }}
+          key: ${{ secrets.HOMESERVER_SSH_KEY }}
+          script: |
+            mkdir -p ~/erp
+            chmod 700 ~/erp
+
+      # Step 2 — docker-compose.prod.yml 를 GitHub raw 로 다운로드(이 SHA 기준)
+      - name: 2) Fetch compose.prod.yml from GH raw
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.HOMESERVER_HOST }}
+          username: ${{ secrets.HOMESERVER_USER }}
+          key: ${{ secrets.HOMESERVER_SSH_KEY }}
+          envs: GH_TOKEN,REPO,SHA
+          script: |
+            cd ~/erp
+            curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github.v3.raw" \
+              -o docker-compose.prod.yml \
+              "https://raw.githubusercontent.com/$REPO/$SHA/docker-compose.prod.yml"
+
+      # Step 3 — .env.prod 작성 (GH Secret ERP_ENV_PROD heredoc + IMAGE_TAG override)
+      - name: 3) Write .env.prod
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          ENV_PROD: ${{ secrets.ERP_ENV_PROD }}
+          # 일반 push = :latest. workflow_dispatch image_tag 입력 시 그 SHA(롤백) — 해당 SHA 이미지 ghcr 존재는 사용자 책임.
+          IMAGE_TAG: ${{ github.event.inputs.image_tag || 'latest' }}
+        with:
+          host: ${{ secrets.HOMESERVER_HOST }}
+          username: ${{ secrets.HOMESERVER_USER }}
+          key: ${{ secrets.HOMESERVER_SSH_KEY }}
+          envs: ENV_PROD,IMAGE_TAG
+          script: |
+            cd ~/erp
+            cat > .env.prod <<EOF
+            $ENV_PROD
+            IMAGE_TAG=$IMAGE_TAG
+            EOF
+            chmod 600 .env.prod
+
+      # Step 4 — pull + up (GHCR login → compose)
+      - name: 4) pull + up
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ env.OWNER }}
+        with:
+          host: ${{ secrets.HOMESERVER_HOST }}
+          username: ${{ secrets.HOMESERVER_USER }}
+          key: ${{ secrets.HOMESERVER_SSH_KEY }}
+          envs: GH_TOKEN,OWNER
+          script: |
+            cd ~/erp
+            echo "$GH_TOKEN" | docker login ghcr.io -u "$OWNER" --password-stdin
+            docker compose --env-file .env.prod -f docker-compose.prod.yml pull
+            docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --remove-orphans
+            # erp-back 의 dangling(<none>) 만 정리 — 다른 프로젝트 이미지 보호
+            docker images --filter "reference=ghcr.io/$OWNER/erp-back" --filter "dangling=true" -q | xargs -r docker rmi
+            docker logout ghcr.io
