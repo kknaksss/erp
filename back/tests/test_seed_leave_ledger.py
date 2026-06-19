@@ -24,7 +24,6 @@ from app.models.leave_request import LeaveRequest
 from app.repositories import employee as employee_repo
 from app.services import leave_balance
 from scripts.seed_leave_ledger import (
-    PLACEHOLDER_EMAILS,
     SeedStats,
     seed_ledger,
 )
@@ -39,9 +38,9 @@ async def _seed_existing_employee(session, name: str) -> Employee:
     return emp
 
 
-def _entry(name: str, *, grants=None, requests=None) -> dict:
+def _entry(name: str, *, email: str, grants=None, requests=None) -> dict:
     return {
-        "name": name, "hire_date": "2025-04-07", "department": "hr",
+        "name": name, "email": email, "hire_date": "2025-04-07", "department": "hr",
         "grants": grants if grants is not None else [
             {"category": "연차", "amount": 15.0, "remaining": 13.0,
              "expiry_date": None, "source": "발생", "reason": None},
@@ -78,7 +77,7 @@ async def test_seed_matched_employee(db_session) -> None:
     name = f"테스트김-{uuid.uuid4().hex[:6]}"
     emp = await _seed_existing_employee(db_session, name)
 
-    stats = await seed_ledger(db_session, [_entry(name)])
+    stats = await seed_ledger(db_session, [_entry(name, email=emp.email)])
 
     assert stats.matched == 1 and stats.created == 0
     assert stats.grants == 2 and stats.requests == 2
@@ -96,7 +95,7 @@ async def test_seed_remaining_inserted_as_is(db_session) -> None:
     name = f"잔여검산-{uuid.uuid4().hex[:6]}"
     emp = await _seed_existing_employee(db_session, name)
 
-    await seed_ledger(db_session, [_entry(name)])
+    await seed_ledger(db_session, [_entry(name, email=emp.email)])
 
     # 연차 remaining 13 / Off Day remaining 3 (request 가 있어도 remaining 은 박힌 값 그대로)
     assert await leave_balance.category_balance(db_session, emp.id, LeaveCategory.ANNUAL) == Decimal("13.00")
@@ -108,14 +107,18 @@ async def test_seed_remaining_inserted_as_is(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_seed_placeholder_creates_employee(db_session) -> None:
-    stats = await seed_ledger(db_session, [_entry("박소은")])
+    # DB 에 없는 email → placeholder 신규 생성(email = entry["email"] 그대로).
+    # 유니크 email 로 커밋된 시드(박소은 placeholder)와 격리.
+    name = f"부재직원-{uuid.uuid4().hex[:6]}"
+    email = f"absent-{uuid.uuid4().hex[:8]}@x.com"
+    stats = await seed_ledger(db_session, [_entry(name, email=email)])
 
     assert stats.created == 1 and stats.matched == 0
-    assert any("박소은" in line for line in stats.placeholder_emails)
+    assert any(email in line for line in stats.placeholder_emails)
     created = (await db_session.execute(
-        select(Employee).where(Employee.name == "박소은"))).scalars().first()
+        select(Employee).where(Employee.email == email))).scalars().first()
     assert created is not None
-    assert created.email == PLACEHOLDER_EMAILS["박소은"]
+    assert created.name == name and created.email == email
     assert created.active is True and created.department == "hr"
     assert created.hire_date == date(2025, 4, 7)
 
@@ -128,11 +131,11 @@ async def test_seed_idempotent_skip(db_session) -> None:
     name = f"멱등-{uuid.uuid4().hex[:6]}"
     emp = await _seed_existing_employee(db_session, name)
 
-    await seed_ledger(db_session, [_entry(name)])
+    await seed_ledger(db_session, [_entry(name, email=emp.email)])
     g1, r1, _a = await _counts(db_session, emp.id)
 
     # 재실행 — 이미 grant 있음 → skip(중복 0)
-    stats2 = await seed_ledger(db_session, [_entry(name)], SeedStats())
+    stats2 = await seed_ledger(db_session, [_entry(name, email=emp.email)], SeedStats())
     g2, r2, _a2 = await _counts(db_session, emp.id)
 
     assert stats2.skipped == 1 and stats2.grants == 0 and stats2.requests == 0
