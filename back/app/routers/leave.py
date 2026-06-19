@@ -28,9 +28,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_employee, get_db, require_hr
 from app.models.employee import Employee
+from app.repositories import employee as employee_repo
 from app.schemas.leave_request import (
     ApprovalOut,
     CancelIn,
+    ChangeRequestOut,
+    ChangeSideOut,
     ErpIntakeIn,
     ExpiringLotOut,
     LeaveRequestOut,
@@ -39,7 +42,13 @@ from app.schemas.leave_request import (
     RejectIn,
     SlackIntakeIn,
 )
-from app.services import leave_approval, leave_cancel, leave_intake, leave_self
+from app.services import (
+    leave_approval,
+    leave_cancel,
+    leave_change,
+    leave_intake,
+    leave_self,
+)
 
 
 def _to_pending_out(req, emp) -> PendingRequestOut:
@@ -58,6 +67,18 @@ def _to_pending_out(req, emp) -> PendingRequestOut:
         status=req.status,
         channel=req.channel,
         created_at=req.created_at,
+    )
+
+
+def _to_change_out(original, reapplication, emp) -> ChangeRequestOut:
+    """(원건, 재신청, 신청자) → 변경 단위(묶음) DTO. `change_group_id`=재신청 측(반려도 보존)."""
+    return ChangeRequestOut(
+        change_group_id=reapplication.change_group_id,
+        employee_id=emp.id,
+        employee_name=emp.name,
+        employee_email=emp.email,
+        original=ChangeSideOut.model_validate(original),
+        reapplication=ChangeSideOut.model_validate(reapplication),
     )
 
 router = APIRouter(prefix="/leave", tags=["leave"])
@@ -199,3 +220,71 @@ async def reject_cancel_request(
     """
     req = await leave_cancel.reject_cancel(session, hr, request_id, payload.reason)
     return LeaveRequestOut.model_validate(req)
+
+
+# ---- 변경 = 취소 + 재신청 묶음 (WP-004 Phase 2) ---------------------------
+
+
+@router.post("/requests/{request_id}/change", response_model=ChangeRequestOut)
+async def change_request(
+    request_id: UUID,
+    payload: ErpIntakeIn,
+    employee: Annotated[Employee, Depends(get_current_employee)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ChangeRequestOut:
+    """변경 요청(본인) — 원건(`request_id`) 묶음 표시 + ERP 폼 재신청(`신청됨`) = 한 묶음.
+
+    원건 `신청됨`/`승인됨` 만 변경(그 외 409)·타인 403·없음 404·이미 변경중 409·토큰없음 401.
+    응답 = 변경 단위(`change_group_id` + 원건/재신청). 원건은 직접 수정 X(취소는 HR 승인 시점).
+    """
+    original, reapplication = await leave_change.request_change(
+        session, employee, request_id, payload
+    )
+    return _to_change_out(original, reapplication, employee)
+
+
+@router.get("/admin/change-requests", response_model=list[ChangeRequestOut])
+async def change_requests_queue(
+    _hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> list[ChangeRequestOut]:
+    """HR 변경 큐 = pending 변경 묶음(원건+재신청 한 항목). 신청/취소 큐와 별도. 비-HR 403."""
+    bundles = await leave_change.change_queue(session)
+    return [_to_change_out(orig, reapp, emp) for orig, reapp, emp in bundles]
+
+
+@router.post(
+    "/admin/change-requests/{change_group_id}/approve", response_model=ChangeRequestOut
+)
+async def approve_change_request(
+    change_group_id: UUID,
+    hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ChangeRequestOut:
+    """변경 승인(HR) — 원건 취소(승인분이면 원-lot 복원) + 재신청 승인(FEFO) **한 번에**(원자).
+
+    없음 404·이미 처리 409(이중 처리 차단)·비-HR 403. 응답 = 원건(취소됨)+재신청(승인됨) 묶음.
+    """
+    original, reapplication = await leave_change.approve_change(session, hr, change_group_id)
+    emp = await employee_repo.get_by_id(session, original.employee_id)
+    return _to_change_out(original, reapplication, emp)
+
+
+@router.post(
+    "/admin/change-requests/{change_group_id}/reject", response_model=ChangeRequestOut
+)
+async def reject_change_request(
+    change_group_id: UUID,
+    payload: RejectIn,
+    hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> ChangeRequestOut:
+    """변경 반려(HR) — 원건 유지(차감·복원 불변) + 재신청 폐기(`반려됨`+사유, 누락/공백 422).
+
+    없음 404·이미 처리 409·비-HR 403. 응답 = 원건(유지)+재신청(반려됨) 묶음.
+    """
+    original, reapplication = await leave_change.reject_change(
+        session, hr, change_group_id, payload.reason
+    )
+    emp = await employee_repo.get_by_id(session, original.employee_id)
+    return _to_change_out(original, reapplication, emp)

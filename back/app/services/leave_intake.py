@@ -103,15 +103,17 @@ async def create_from_slack(session: AsyncSession, payload: SlackIntakeIn) -> Le
     return req
 
 
-async def create_from_erp(
+async def build_erp_request(
     session: AsyncSession, employee_id: UUID, payload: ErpIntakeIn
 ) -> LeaveRequest:
-    """② ERP 폼(로그인 본인) → `신청됨`. 시크릿·email 불요 — sub 로 신청자 직접 식별(channel=erp).
+    """② ERP 폼 코어(commit 없음) → `신청됨` 행 생성(flush 까지). 폼 검증 = validate_form.
 
-    created_at = server_default(now) — 동기 로그인 호출이라 재전송 dedup 불요. commit 은 호출 router.
+    `create_from_erp`(intake) + 변경 재신청(WP-004 Phase 2)이 공유하는 **non-committing 코어**.
+    변경은 원건 묶음 표시 + 재신청 생성을 **한 트랜잭션**으로 묶어야 하므로 commit 을 분리한다
+    (원자성 — leave_change 가 1 commit). channel=erp 단일 채널(SPEC-004 ERP 폼 = 재신청 진입점).
     """
     amount = validate_form(payload.category, payload.unit, payload.am_pm)
-    req = await request_repo.create(
+    return await request_repo.create(
         session,
         employee_id=employee_id,
         category=payload.category,
@@ -122,5 +124,15 @@ async def create_from_erp(
         note=payload.note,
         channel=RequestChannel.ERP,
     )
+
+
+async def create_from_erp(
+    session: AsyncSession, employee_id: UUID, payload: ErpIntakeIn
+) -> LeaveRequest:
+    """② ERP 폼(로그인 본인) → `신청됨`. 시크릿·email 불요 — sub 로 신청자 직접 식별(channel=erp).
+
+    created_at = server_default(now) — 동기 로그인 호출이라 재전송 dedup 불요. commit 은 호출 router.
+    """
+    req = await build_erp_request(session, employee_id, payload)
     await session.commit()
     return req

@@ -87,15 +87,23 @@ async def get_by_id(session: AsyncSession, request_id: UUID) -> LeaveRequest | N
 async def list_pending(
     session: AsyncSession,
 ) -> list[tuple[LeaveRequest, Employee]]:
-    """HR 신청 큐 = `신청됨` 전 직원 + 신청자(employee) 조인. 사용일 ASC(임박 우선)·동률 created_at ASC.
+    """HR 신청 큐 = standalone `신청됨` 전 직원 + 신청자(employee) 조인. 사용일 ASC·동률 created_at ASC.
 
     **이 WP 는 `신청됨` 만**(`취소요청됨` 은 WP-004 — partial index `(status) WHERE IN(신청됨,취소요청됨)`
     은 공유하나 조회는 `신청됨` 한정). 처리분(승인/반려)은 status 변경으로 자연 제외 → 이력.
+
+    **변경 묶음 멤버 제외(`change_group_id IS NULL`, WP-004 Phase 2)**: 변경 재신청·원건은
+    `change_group_id` 가 set 된 `신청됨` 이라도 이 큐에 노출하지 않는다 — 별도 변경 큐
+    (`list_change_bundles`)에서 한 묶음으로 처리(SPEC-005 §변경 "한 항목"·domains §Invariant).
+    standalone 신청만 단건 승인 대상이라 누수·이중 승인 차단. 응답 shape·정렬 불변(계약 보존).
     """
     stmt = (
         select(LeaveRequest, Employee)
         .join(Employee, LeaveRequest.employee_id == Employee.id)
-        .where(LeaveRequest.status == RequestStatus.REQUESTED)
+        .where(
+            LeaveRequest.status == RequestStatus.REQUESTED,
+            LeaveRequest.change_group_id.is_(None),
+        )
         .order_by(LeaveRequest.use_date.asc(), LeaveRequest.created_at.asc())
     )
     rows = (await session.execute(stmt)).all()
@@ -116,6 +124,54 @@ async def list_cancel_requested(
         .join(Employee, LeaveRequest.employee_id == Employee.id)
         .where(LeaveRequest.status == RequestStatus.CANCEL_REQUESTED)
         .order_by(LeaveRequest.use_date.asc(), LeaveRequest.created_at.asc())
+    )
+    rows = (await session.execute(stmt)).all()
+    return [(req, emp) for req, emp in rows]
+
+
+async def get_change_group(
+    session: AsyncSession, change_group_id: UUID
+) -> list[LeaveRequest]:
+    """변경 묶음(`change_group_id`)의 전 행 — 생성순(created_at ASC). 원건=첫행·재신청=막행.
+
+    WP-004 Phase 2 — 변경 승인/반려 대상 로드. 재신청은 변경 요청 시점(원건보다 나중) 생성이라
+    created_at 단조 → **가장 오래된 = 원건, 가장 최신 = 재신청**(원건이 `승인됨`이든 `신청됨`이든 동형).
+    soft-deleted(원건 `취소됨`) 행도 포함 — 이미 처리된 묶음 재처리 게이트는 호출 service 가 판정.
+    """
+    stmt = (
+        select(LeaveRequest)
+        .where(LeaveRequest.change_group_id == change_group_id)
+        .order_by(LeaveRequest.created_at.asc(), LeaveRequest.id.asc())
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def list_change_bundles(
+    session: AsyncSession,
+) -> list[tuple[LeaveRequest, Employee]]:
+    """HR 변경 큐 원천 = **재신청이 아직 `신청됨`** 인 변경 묶음의 전 행 + 신청자. 호출 service 가 묶음화.
+
+    pending 변경 묶음 = `change_group_id` 그룹 중 `신청됨` 재신청이 살아있는 것(승인/반려 처리 전).
+    그룹 단위로 (change_group_id, created_at) 정렬해 반환 → service 가 원건/재신청으로 묶는다.
+    신청 큐(`list_pending`)·취소 큐(`list_cancel_requested`)와 **별도**(계약 불변 — SPEC-005 §변경).
+    """
+    pending_groups = (
+        select(LeaveRequest.change_group_id)
+        .where(
+            LeaveRequest.status == RequestStatus.REQUESTED,
+            LeaveRequest.change_group_id.is_not(None),
+        )
+        .scalar_subquery()
+    )
+    stmt = (
+        select(LeaveRequest, Employee)
+        .join(Employee, LeaveRequest.employee_id == Employee.id)
+        .where(LeaveRequest.change_group_id.in_(pending_groups))
+        .order_by(
+            LeaveRequest.change_group_id.asc(),
+            LeaveRequest.created_at.asc(),
+            LeaveRequest.id.asc(),
+        )
     )
     rows = (await session.execute(stmt)).all()
     return [(req, emp) for req, emp in rows]

@@ -119,3 +119,38 @@ class CancelIn(BaseModel):
 
     reason: str | None = None
     model_config = ConfigDict(str_strip_whitespace=True)
+
+
+# ---- 변경 = 취소 + 재신청 묶음 (WP-004 Phase 2) ---------------------------
+
+
+class ChangeSideOut(BaseModel):
+    """변경 묶음 한 쪽(원건/재신청)의 신청 내용 — 신청자 식별은 묶음 상위에 1번만(중복 제거)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    category: LeaveCategory
+    unit: LeaveUnit
+    amount: Decimal
+    am_pm: AmPm | None
+    use_date: date
+    note: str | None
+    status: RequestStatus
+    channel: RequestChannel
+    created_at: datetime
+
+
+class ChangeRequestOut(BaseModel):
+    """변경 단위(묶음) — `change_group_id` + 원건/재신청 요약 + 신청자. surface 에 "변경" 한 항목.
+
+    SPEC-005 §변경("오전 반차 06-20 → 연차 06-22"): `original`=취소 대상 원건, `reapplication`=
+    `신청됨` 재신청. 직원 변경요청 응답·HR 변경 큐·승인/반려 응답 공용. FE Phase 3 가 소비.
+    """
+
+    change_group_id: UUID
+    employee_id: UUID
+    employee_name: str
+    employee_email: str
+    original: ChangeSideOut  # 취소 대상 원건(승인됨/신청됨 → 승인 시 취소됨)
+    reapplication: ChangeSideOut  # ERP 폼 재신청(신청됨 → 승인 시 승인됨 / 반려 시 반려됨)

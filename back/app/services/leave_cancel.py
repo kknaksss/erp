@@ -53,6 +53,10 @@ async def request_cancel(
         raise NotFoundError("신청을 찾을 수 없습니다")
     if req.employee_id != employee.id:
         raise ForbiddenError("본인 신청만 취소할 수 있습니다")
+    # 변경 묶음 멤버(change_group_id set)는 단건 취소 금지(WP-004 Phase 2) — 원건을 단독 취소하면
+    # 재신청이 떠도는 dangling 묶음이 된다. 변경 승인/반려(leave_change)로만 처리(409).
+    if req.change_group_id is not None:
+        raise ConflictError("변경 묶음에 속한 신청은 변경 승인/반려로 처리합니다")
 
     if req.status == RequestStatus.REQUESTED:
         req.status = RequestStatus.CANCELLED

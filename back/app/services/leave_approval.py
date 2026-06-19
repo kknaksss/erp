@@ -36,27 +36,31 @@ async def _load_requested(session: AsyncSession, request_id: UUID) -> LeaveReque
     """승인/반려 대상 로드 + 상태 게이트. 없으면 404 · `신청됨` 아니면 409(state machine).
 
     신청 큐(`신청됨`)에서만 처리 가능 — 이미 승인/반려된 건 재처리 차단(차감 중복 방지).
+    **변경 묶음 멤버(`change_group_id` set)는 거부**(WP-004 Phase 2) — 재신청/원건을 단건 승인하면
+    묶음 원자성(원건 취소+재신청 승인 함께)이 깨지므로, 변경 승인/반려(`leave_change`)로만 처리(409).
     """
     req = await request_repo.get_by_id(session, request_id)
     if req is None:
         raise NotFoundError("신청을 찾을 수 없습니다")
     if req.status != RequestStatus.REQUESTED:
         raise ConflictError("이미 처리된 신청입니다")
+    if req.change_group_id is not None:
+        raise ConflictError("변경 묶음에 속한 신청은 변경 승인/반려로 처리합니다")
     return req
 
 
-async def approve(
-    session: AsyncSession, hr: Employee, request_id: UUID
-) -> tuple[LeaveRequest, Decimal, bool]:
-    """승인 → 선택 종류 FEFO 차감. 반환 (신청, 차감후 잔여, 음수경고). commit 은 service.
+async def apply_fefo_charge(
+    session: AsyncSession, req: LeaveRequest, hr: Employee
+) -> None:
+    """FEFO 차감 코어(commit 없음) — 로드·상태게이트된 `신청됨` 신청을 `승인됨`으로 차감(flush 까지).
 
-    FEFO: `valid_lots_fefo(employee, category, use_date)`(expiry ASC·NULL 최후미)를 순서대로 소진.
-    한 lot 으로 부족하면 다음 lot 으로 분할(allocation 다건, 합 = request.amount). 후보가 부족하면
-    **마지막 FEFO lot 의 remaining 이 음수**로 흡수(별도 overflow 없음 — 하드 차단 없음). 차감 후
-    해당 종류 잔여가 음수면 경고 플래그(승인은 가능 — SPEC-003 §케이스 매트릭스).
+    `approve`(단건 승인) + 변경 승인의 재신청 승인(WP-004 Phase 2)이 공유하는 **non-committing 코어**.
+    변경 승인은 원건 취소 + 재신청 승인을 한 트랜잭션으로 묶어야 하므로 commit 을 분리한다(원자성).
+
+    FEFO: `valid_lots_fefo`(expiry ASC·NULL 최후미)를 순서대로 소진. 한 lot 부족 시 다음 lot 분할
+    (allocation 다건, 합 = request.amount). 후보 부족 시 **마지막 FEFO lot remaining 음수** 흡수
+    (별도 overflow 없음 — 하드 차단 없음). 후보 lot 0건이면 allocation 미생성(차감 대상 없음).
     """
-    req = await _load_requested(session, request_id)
-
     lots = await grant_repo.valid_lots_fefo(session, req.employee_id, req.category, req.use_date)
     needed = req.amount
     last = len(lots) - 1
@@ -70,13 +74,23 @@ async def approve(
         lot.remaining -= take  # ORM dirty — flush 시 반영(음수 흡수)
         await allocation_repo.create(session, request_id=req.id, grant_id=lot.id, amount=take)
         needed -= take
-    # 후보 lot 이 0건이면 차감 대상이 없어 allocation 미생성(grant_id NOT NULL FK) — 음수 흡수할 lot 도
-    # 없음. 하드 차단은 SPEC 상 금지라 승인은 진행(코드 SoT — 리포트 §이슈/블로커 명시).
 
     req.status = RequestStatus.APPROVED
     req.approved_by = hr.id
     req.approved_at = datetime.now(UTC)
     await session.flush()  # 잔여 집계 전 lot 변경·상태 반영(category_balance 는 SQL 합산)
+
+
+async def approve(
+    session: AsyncSession, hr: Employee, request_id: UUID
+) -> tuple[LeaveRequest, Decimal, bool]:
+    """승인 → 선택 종류 FEFO 차감. 반환 (신청, 차감후 잔여, 음수경고). commit 은 service.
+
+    차감 본체 = `apply_fefo_charge`(공유 코어). 차감 후 해당 종류 잔여가 음수면 경고 플래그
+    (승인은 가능 — SPEC-003 §케이스 매트릭스). 후보 lot 이 0건이면 allocation 미생성(코드 SoT).
+    """
+    req = await _load_requested(session, request_id)
+    await apply_fefo_charge(session, req, hr)
 
     balance = await leave_balance.category_balance(session, req.employee_id, req.category)
     await session.commit()
