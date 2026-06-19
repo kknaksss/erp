@@ -38,6 +38,7 @@ from app.schemas.leave_admin import (
     EmployeeLeaveDetailOut,
     LedgerEntryOut,
 )
+from app.schemas.employee import EmployeeOut
 from app.schemas.leave_grant import BulkGrantIn, BulkGrantOut
 from app.schemas.leave_request import (
     ApprovalOut,
@@ -336,6 +337,23 @@ async def adjust_leave(
     delta 를 합산해 자동 반영(이중 반영 없음).
     """
     return await leave_adjustment.adjust(session, hr, payload)
+
+
+# ---- HR 직원목록 — 연차 운영 대상 선택 (WP-005 권한 갭 보강 — require_hr) -
+
+
+@router.get("/admin/employees", response_model=list[EmployeeOut])
+async def hr_employee_roster(
+    _hr: Annotated[Employee, Depends(require_hr)],
+    session: Annotated[AsyncSession, Depends(get_db)],
+) -> list[Employee]:
+    """HR 연차 운영(부여 대상·조정/상세 직원 선택)이 쓸 전 직원 명부(이름순). 비-HR 403·토큰없음 401.
+
+    admin 디렉토리(`GET /admin/employees`·require_admin·SPEC-002)와 별 목적·별 권한 축 —
+    member-role HR 도 200(department=="hr"). 부서 필터 안 함(전체 반환·FE 가 client-side 추림,
+    P1 벌크 부여 계약과 일관). 명부 쿼리·EmployeeOut 은 admin 디렉토리와 동일 소비(재정의 없음).
+    """
+    return await employee_repo.list_all(session)
 
 
 # ---- HR 상세 연차 현황 — 임의 직원 (WP-005 Phase 3 BE — require_hr) -------
