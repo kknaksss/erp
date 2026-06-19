@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Clock, History, Loader2, Pencil, Plus, Smartphone, X } from "lucide-react";
 
 import { AppHeader } from "@/components/app-header";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LeaveRequestDialog } from "@/components/leave-request-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -85,6 +86,8 @@ export default function LeavePage() {
   // 변경 모드 = 원건 신청 id (set 되면 변경 폼 다이얼로그 오픈).
   const [changeTargetId, setChangeTargetId] = useState<string | null>(null);
   const [actingId, setActingId] = useState<string | null>(null);
+  // 취소 확인 대상(앱 모달) — native window.confirm 의 blocking 을 state 로 전환.
+  const [pendingCancel, setPendingCancel] = useState<LeaveRequest | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   // setState 는 await 이후(비동기 연속)라 effect 내 동기 setState 규칙에 안 걸림.
@@ -121,15 +124,10 @@ export default function LeavePage() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  // 취소 — 신청됨=자유 취소(즉시 취소됨) / 승인됨=취소 요청(취소요청됨, HR 승인 대기). 둘 다 확인 후.
+  // 취소 — 신청됨=자유 취소(즉시 취소됨) / 승인됨=취소 요청(취소요청됨, HR 승인 대기).
+  // 확인은 앱 모달(ConfirmDialog)에서 받고, 확인 시 이 함수가 실제 POST 를 수행.
   async function onCancel(r: LeaveRequest) {
     const isApproved = r.status === "승인됨";
-    const ok = window.confirm(
-      isApproved
-        ? `${r.use_date} ${r.category} 신청의 취소를 요청할까요? HR 승인 후 잔여가 복원됩니다.`
-        : `${r.use_date} ${r.category} 신청을 취소할까요?`,
-    );
-    if (!ok) return;
     setActingId(r.id);
     try {
       await authedFetch<LeaveRequest>(`/leave/requests/${r.id}/cancel`, {
@@ -344,7 +342,7 @@ export default function LeavePage() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => onCancel(r)}
+                                  onClick={() => setPendingCancel(r)}
                                   disabled={busy}
                                   className="text-mred-500"
                                 >
@@ -415,6 +413,27 @@ export default function LeavePage() {
           reload();
         }}
         changeTargetId={changeTargetId ?? undefined}
+      />
+
+      {/* 취소 확인 모달 — native confirm 대체. 분기 메시지 보존(승인됨=취소요청 / 신청됨=취소). */}
+      <ConfirmDialog
+        open={pendingCancel !== null}
+        title="신청 취소"
+        message={
+          pendingCancel
+            ? pendingCancel.status === "승인됨"
+              ? `${pendingCancel.use_date} ${pendingCancel.category} 신청의 취소를 요청할까요? HR 승인 후 잔여가 복원됩니다.`
+              : `${pendingCancel.use_date} ${pendingCancel.category} 신청을 취소할까요?`
+            : ""
+        }
+        confirmLabel="확인"
+        cancelLabel="닫기"
+        onConfirm={() => {
+          if (pendingCancel) onCancel(pendingCancel);
+        }}
+        onOpenChange={(next) => {
+          if (!next) setPendingCancel(null);
+        }}
       />
 
       {toast ? (
