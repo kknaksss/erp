@@ -6,8 +6,11 @@
 # 사전 작업(호스트):
 #   1) mediness-pg 에 erp database 생성:  docker exec mediness-pg psql -U <user> -c "CREATE DATABASE erp;"
 #   2) cp .env.prod.example .env.prod  → 실값 기입(아래 example 참조)
-#   3) docker compose -f docker-compose.prod.yml up -d --build
-#   FE(Next.js)는 Vercel 배포(설계 락) — 본 compose 는 BE 만.
+#      ※ ONLYOFFICE_JWT_SECRET·ONLYOFFICE_CALLBACK_BASE_URL·DOCUMENT_VOLUME_ROOT 포함
+#        (CI 배포면 GH Secret ENV_PROD 에 동일 3종을 먼저 넣어야 함 — 없으면 erp-back startup 실패)
+#   3) docker compose --env-file .env.prod -f docker-compose.prod.yml up -d
+#   FE(Next.js)는 Vercel 배포(설계 락) — 본 compose 는 BE + ONLYOFFICE DocServer.
+#   추가 수동: NPM erp-docs.kknaks.cloud → 호스트 28083(HTTPS) / Vercel env NEXT_PUBLIC_ONLYOFFICE_DS_URL=https://erp-docs.kknaks.cloud
 
 services:
   erp-back:
@@ -22,8 +25,39 @@ services:
     env_file: .env.prod
     ports:
       - "28082:28082"
+    volumes:
+      # 문서 바이너리 영속 저장 — host bind mount = 전용 데이터 디스크 /mnt/data(sda1, 1.8T).
+      # 컨테이너 내부 경로 = .env.prod DOCUMENT_VOLUME_ROOT=/data/erp-documents 와 일치.
+      - /mnt/data/erp-documents:/data/erp-documents
     networks:
       - mediness
+
+  # ONLYOFFICE Document Server — 실시간 공동편집(WP-006 P3).
+  #   브라우저 → DocServer = NPM erp-docs.kknaks.cloud(공개 HTTPS) → 호스트 28083
+  #   DocServer → BE = 내부망 http://erp-back:28082 (.env.prod ONLYOFFICE_CALLBACK_BASE_URL)
+  #   JWT_SECRET = .env.prod ONLYOFFICE_JWT_SECRET 와 동일(BE 와 공유). mediness JWT_SECRET 과 분리(architecture §JWT).
+  erp-onlyoffice:
+    image: onlyoffice/documentserver:latest
+    container_name: erp-onlyoffice
+    restart: unless-stopped
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET}
+    ports:
+      - "28083:80"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_log:/var/log/onlyoffice
+      - onlyoffice_lib:/var/lib/onlyoffice
+      - onlyoffice_db:/var/lib/postgresql
+    networks:
+      - mediness
+
+volumes:
+  onlyoffice_data:
+  onlyoffice_log:
+  onlyoffice_lib:
+  onlyoffice_db:
 
 networks:
   # mediness prod compose 가 만든 default network 에 합류(external).
