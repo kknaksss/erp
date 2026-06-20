@@ -1,16 +1,16 @@
 "use client";
 
-// 문서관리 모듈 (WP-006 Phase 4) — 트리 사이드바 + 새 폴더/파일·업로드·삭제 모달.
-// GET /documents/tree(SpaceNode[]) 소비 → 좌측 트리, 우측 본문(빈 상태 / 문서 선택됨).
+// 문서관리 모듈 (WP-006 Phase 4 + Phase 5) — 트리 사이드바 + 모달 + ONLYOFFICE 편집기.
+// GET /documents/tree(SpaceNode[]) 소비 → 좌측 트리, 우측 본문(빈 상태 / 문서 선택 시 편집기).
 //  - U-1 트리(부서/개인 스페이스·폴더 토글·검색·문서 선택)  · U-2 새 폴더/파일  · U-3 업로드  · U-6 삭제확인.
+//  - U-4 편집기(ONLYOFFICE 임베드 + 헤더·버전이력) · U-5 공유(멤버십 안내) = document-editor.tsx.
 //  - 생성/업로드/삭제 후 트리 refetch 반영.
-// P5(범위 밖): 문서 선택 시 우측은 "편집기 준비 중" 빈 표면까지만 — ONLYOFFICE 임베드·버전이력·공유는 P5.
-//   P5 핸드오프 접점 = 선택된 문서 id → GET /documents/files/{id}/editor-config 소비 지점(아래 editor 패널).
 // 시안: 21-html/document-management.html. 셸 HR 사이드바는 /documents 에서 숨김(app-sidebar.tsx).
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, FileText, FolderTree, Loader2, Sheet, Trash2 } from "lucide-react";
+import { FolderTree, Loader2 } from "lucide-react";
 
 import { DocumentDeleteDialog } from "@/components/document-delete-dialog";
+import { DocumentEditor } from "@/components/document-editor";
 import { DocumentNewFileDialog } from "@/components/document-new-file-dialog";
 import { DocumentNewFolderDialog } from "@/components/document-new-folder-dialog";
 import { DocumentTree } from "@/components/document-tree";
@@ -21,7 +21,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { cn } from "@/lib/utils";
 import type { DocCreateTarget, DocDocument, DocFolderNode, DocSpaceNode } from "@/types";
 
 type LoadState =
@@ -170,7 +169,8 @@ export default function DocumentsPage() {
       {/* 우측 본문 — 빈 상태 / 문서 선택됨(P5 편집기 자리). 시맨틱 <main> 은 셸 레이아웃 소유. */}
       <div className="flex min-w-0 flex-1 flex-col bg-mgray-50">
         {selected ? (
-          <DocumentEditorPanel
+          <DocumentEditor
+            key={selected.id}
             doc={selected}
             onClose={() => setSelected(null)}
             onDelete={() => setDeleteDoc(selected)}
@@ -233,73 +233,5 @@ export default function DocumentsPage() {
         </div>
       ) : null}
     </div>
-  );
-}
-
-// 문서 선택 패널 — P4 는 최소 헤더(닫기·제목·삭제) + "편집기 준비 중" 빈 표면.
-// P5 가 이 자리에 ONLYOFFICE 편집기(editor-config 소비)·버전 이력·공유·공동편집을 채운다.
-function DocumentEditorPanel({
-  doc,
-  onClose,
-  onDelete,
-}: {
-  doc: DocDocument;
-  onClose: () => void;
-  onDelete: () => void;
-}) {
-  const isExcel = doc.type === "excel";
-  const Icon = isExcel ? Sheet : FileText;
-  const ext = isExcel ? ".xlsx" : ".docx";
-  return (
-    <>
-      {/* 문서 헤더 (P4 최소) */}
-      <div className="flex items-center gap-3 border-b border-mgray-100 bg-white px-4 py-2.5">
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="닫기"
-          title="닫기"
-          className="flex size-8 shrink-0 items-center justify-center rounded-md text-mgray-500 hover:bg-mgray-100"
-        >
-          <ArrowLeft className="size-[18px]" />
-        </button>
-        <span
-          className={cn(
-            "flex size-8 shrink-0 items-center justify-center rounded-md",
-            isExcel ? "bg-mgreen-50 text-mgreen-500" : "bg-brand-50 text-brand-500",
-          )}
-        >
-          <Icon className="size-[18px]" />
-        </span>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-sm font-semibold text-mgray-800">
-            {doc.name}
-          </span>
-          <span className="shrink-0 text-[12px] text-mgray-400">{ext}</span>
-        </div>
-        <div className="flex-1" />
-        <button
-          type="button"
-          onClick={onDelete}
-          aria-label="삭제"
-          title="삭제"
-          className="flex size-8 items-center justify-center rounded-md text-mgray-500 hover:bg-mred-50 hover:text-mred-500"
-        >
-          <Trash2 className="size-4" />
-        </button>
-      </div>
-
-      {/* 편집기 자리 — P5(ONLYOFFICE 임베드) 준비 중 빈 표면 */}
-      <div className="flex flex-1 flex-col items-center justify-center text-center">
-        <div className="mb-4 flex size-16 items-center justify-center rounded-2xl bg-white shadow-sm">
-          <Icon className="size-7 text-mgray-400" />
-        </div>
-        <h2 className="text-base font-semibold text-mgray-700">{doc.name}</h2>
-        <p className="mt-1 max-w-xs text-[13px] leading-relaxed text-mgray-500">
-          편집기 준비 중입니다. 실시간 공동편집(ONLYOFFICE)은 다음 단계에서
-          제공됩니다.
-        </p>
-      </div>
-    </>
   );
 }
