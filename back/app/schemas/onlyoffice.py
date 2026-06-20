@@ -10,11 +10,13 @@ from pydantic import BaseModel, ConfigDict
 class CallbackIn(BaseModel):
     """ONLYOFFICE 저장 콜백 body — 규격 필드 일부만 사용(나머지 무시).
 
-    `status`(1 editing·2 MustSave·3 error·4 closed·6 ForceSave·7 force error) + 편집본 `url` +
-    `key`(세션 식별). body 의 `token`(서명)은 라우터가 헤더 토큰으로 검증하므로 여기선 선택.
+    인증·저장 결정의 SSOT 는 body `token`(콜백 payload 전체 서명 JWT). 라우터가 token 을 검증하고
+    그 claims 의 status/url 로 저장 처리하므로 top-level status/url/key 는 서명 안 된 echo(미신뢰).
+    status(1 editing·2 MustSave·3 error·4 closed·6 ForceSave·7 force error)는 claims 부재 시만
+    참고 — top-level 은 선택(토큰 없는 body 도 라우터에서 401 처리하도록 status optional).
     """
 
-    status: int
+    status: int | None = None
     url: str | None = None
     key: str | None = None
     token: str | None = None

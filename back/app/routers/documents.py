@@ -193,15 +193,19 @@ async def download_version(
 async def save_callback(
     document_id: UUID,
     payload: CallbackIn,
-    _claims: Annotated[dict, Depends(require_onlyoffice_jwt)],
     session: Annotated[AsyncSession, Depends(get_db)],
     volume_root: Annotated[Path, Depends(get_volume_root)],
 ) -> CallbackAck:
-    """③ 저장 콜백(DocServer→BE) — ONLYOFFICE JWT 인증(위조 401).
+    """③ 저장 콜백(DocServer→BE) — body `token` JWT 인증(부재/위조 401).
 
+    ONLYOFFICE 는 콜백 JWT 를 요청 body `token`(콜백 payload 전체 서명)으로 보낸다 — 헤더 아님
+    (헤더는 download 전용). 검증된 claims 의 status/url 로만 저장 처리(서명 안 된 top-level 미신뢰).
     status 2/6 → 편집본 fetch(실패 502/503) + 새 version append. 1/4 저장없이 ack. 3/7 로그+ack.
     """
+    if not payload.token:
+        raise InvalidTokenError("ONLYOFFICE 토큰이 없습니다")
+    claims = onlyoffice.verify(payload.token)
     result = await onlyoffice.handle_callback(
-        session, volume_root, document_id, payload.status, payload.url
+        session, volume_root, document_id, int(claims.get("status", 0)), claims.get("url")
     )
     return CallbackAck(**result)

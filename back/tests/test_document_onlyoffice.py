@@ -1,8 +1,8 @@
 """ONLYOFFICE 통합 3 엔드포인트 검증 — WP-006 Phase 3 (architecture §JWT·§저장 콜백).
 
 DocServer 는 mock(httpx fetch monkeypatch), JWT 는 conftest 테스트 시크릿. service + endpoint.
-대조: editor config 서명·멤버십/404 · download stream·JWT 401·version 404 · callback 2/6 append·
-1/4 무저장·fetch 실패 502/503·위조 401.
+대조: editor config 서명·멤버십/404 · download stream·헤더 JWT 401·version 404 · callback 2/6 append·
+1/4 무저장·fetch 실패 502/503 · callback 엔드포인트는 body `token` 검증(부재/위조 401·claims status/url 사용).
 """
 
 import uuid
@@ -237,40 +237,108 @@ async def test_callback_fetch_timeout_502(db_session, tmp_path, monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_callback_endpoint_forged_jwt_401(db_session, tmp_path) -> None:
-    """위조 JWT 콜백 → 401(저장 안 함)."""
+async def test_callback_endpoint_forged_body_token_401(db_session, tmp_path) -> None:
+    """body `token` 위조(다른 시크릿 서명) → 401(저장 안 함). ONLYOFFICE 는 콜백 토큰을 body 로 보냄."""
     _emp, _space, doc = await _seed_doc(db_session, tmp_path)
-    forged = jwt.encode({"x": 1}, "wrong", algorithm="HS256")
+    forged = jwt.encode({"status": 2, "url": "http://docserver/x.docx"}, "wrong", algorithm="HS256")
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_volume_root] = lambda: tmp_path
     try:
         async with _client() as c:
             resp = await c.post(f"/documents/files/{doc.id}/callback",
-                                headers={"Authorization": f"Bearer {forged}"},
-                                json={"status": 2, "url": "http://docserver/x.docx"})
+                                json={"status": 2, "url": "http://docserver/x.docx", "token": forged})
         assert resp.status_code == 401
+        assert len(await repo.list_versions(db_session, doc.id)) == 1  # 미저장
     finally:
         app.dependency_overrides.clear()
 
 
 @pytest.mark.asyncio
-async def test_callback_endpoint_save_200(db_session, tmp_path, monkeypatch) -> None:
-    """유효 JWT + status 2 → append + ack{error:0} (endpoint)."""
+async def test_callback_endpoint_missing_body_token_401(db_session, tmp_path) -> None:
+    """body `token` 부재 → 401(422 아님 — status optional, 토큰이 인증 SSOT)."""
+    _emp, _space, doc = await _seed_doc(db_session, tmp_path)
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_volume_root] = lambda: tmp_path
+    try:
+        async with _client() as c:
+            resp = await c.post(f"/documents/files/{doc.id}/callback",
+                                json={"status": 2, "url": "http://docserver/x.docx"})
+        assert resp.status_code == 401
+        assert len(await repo.list_versions(db_session, doc.id)) == 1  # 미저장
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_callback_endpoint_body_token_save_200(db_session, tmp_path, monkeypatch) -> None:
+    """유효 body token(status 2) → 편집본 fetch + version append + ack{error:0} (endpoint)."""
     _emp, _space, doc = await _seed_doc(db_session, tmp_path)
 
     async def _fake_fetch(url: str) -> bytes:
         return b"EDITED"
     monkeypatch.setattr(onlyoffice, "_fetch_edited", _fake_fetch)
 
+    token = _onlyoffice_token({"status": 2, "url": "http://docserver/x.docx", "key": f"{doc.id}_1"})
     app.dependency_overrides[get_db] = lambda: db_session
     app.dependency_overrides[get_volume_root] = lambda: tmp_path
     try:
         async with _client() as c:
             resp = await c.post(f"/documents/files/{doc.id}/callback",
-                                headers={"Authorization": f"Bearer {_onlyoffice_token()}"},
-                                json={"status": 2, "url": "http://docserver/x.docx", "key": f"{doc.id}_1"})
+                                json={"status": 2, "url": "http://docserver/x.docx", "token": token})
         assert resp.status_code == 200, resp.text
         assert resp.json() == {"error": 0}
+        after = await repo.list_versions(db_session, doc.id)
+        assert len(after) == 2 and after[1].version_no == 2
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_callback_endpoint_uses_signed_url_not_body(db_session, tmp_path, monkeypatch) -> None:
+    """claims.url 사용 검증 — 서명 url(GOOD)≠top-level url(EVIL)일 때 fetch 는 GOOD 으로 호출."""
+    _emp, _space, doc = await _seed_doc(db_session, tmp_path)
+
+    fetched: list[str] = []
+
+    async def _capture_fetch(url: str) -> bytes:
+        fetched.append(url)
+        return b"EDITED"
+    monkeypatch.setattr(onlyoffice, "_fetch_edited", _capture_fetch)
+
+    # 토큰은 진짜(GOOD)로 서명, body top-level 은 공격자가 EVIL 로 위조 시도
+    token = _onlyoffice_token({"status": 2, "url": "http://docserver/GOOD.docx"})
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_volume_root] = lambda: tmp_path
+    try:
+        async with _client() as c:
+            resp = await c.post(f"/documents/files/{doc.id}/callback",
+                                json={"status": 2, "url": "http://attacker/EVIL.docx", "token": token})
+        assert resp.status_code == 200, resp.text
+        # 서명된 claims.url 로 fetch — top-level EVIL 무시
+        assert fetched == ["http://docserver/GOOD.docx"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_callback_endpoint_uses_signed_status_not_body(db_session, tmp_path, monkeypatch) -> None:
+    """claims.status 사용 검증 — 서명 status 1(무저장)인데 top-level 2면 저장 안 함(claims 우선)."""
+    _emp, _space, doc = await _seed_doc(db_session, tmp_path)
+
+    async def _fail_fetch(url: str) -> bytes:  # 호출되면 안 됨(저장 분기 진입 금지)
+        raise AssertionError("status 1 인데 편집본 fetch 가 호출됨")
+    monkeypatch.setattr(onlyoffice, "_fetch_edited", _fail_fetch)
+
+    token = _onlyoffice_token({"status": 1, "url": "http://docserver/x.docx"})
+    app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_volume_root] = lambda: tmp_path
+    try:
+        async with _client() as c:
+            resp = await c.post(f"/documents/files/{doc.id}/callback",
+                                json={"status": 2, "url": "http://docserver/x.docx", "token": token})
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"error": 0}
+        assert len(await repo.list_versions(db_session, doc.id)) == 1  # 서명 status 1 → 미저장
     finally:
         app.dependency_overrides.clear()
 
