@@ -239,3 +239,82 @@ export interface EmployeeLeaveDetail {
   total: string; // 음수 가능
   ledger: LedgerEntry[];
 }
+
+// ---- 문서관리 (WP-006) — back/app/schemas/document.py 와 정렬 (FE Phase 4) ----------
+// enum 값은 영문(외부 계약 그대로). 트리는 SpaceNode[] (엔벨로프 없음, raw 배열).
+
+export type SpaceType = "department" | "personal";
+export type DocumentType = "word" | "excel"; // word=.docx / excel=.xlsx
+
+// 폴더 (FolderOut). 자기참조 트리 — parent_id=null 이면 space 직속(루트).
+export interface DocFolder {
+  id: string;
+  space_id: string;
+  parent_id: string | null;
+  name: string;
+}
+
+// 문서 잎 (DocumentOut). 선택 식별자 = id (P5 editor-config 핸드오프 키).
+export interface DocDocument {
+  id: string;
+  space_id: string;
+  folder_id: string | null;
+  name: string;
+  type: DocumentType;
+}
+
+// 버전 1건 (VersionOut) — P5(버전 이력 UI)용. P4 는 타입만 정의.
+export interface DocVersion {
+  id: string;
+  document_id: string;
+  version_no: number;
+  ext: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+// 스페이스 (SpaceOut) — 멤버십 판정 단위. 부서스페이스(department)·개인스페이스(personal).
+export interface DocSpace {
+  id: string;
+  type: SpaceType;
+  name: string;
+  department: string | null;
+  owner_id: string | null;
+}
+
+// 트리 노드 — 폴더 + 자기참조 하위(폴더/문서). 재귀 (FolderNode).
+export interface DocFolderNode {
+  folder: DocFolder;
+  folders: DocFolderNode[];
+  documents: DocDocument[];
+}
+
+// 트리 최상위 — 스페이스 + 루트 직속 폴더/문서 (SpaceNode). GET /documents/tree 응답 요소.
+export interface DocSpaceNode {
+  space: DocSpace;
+  folders: DocFolderNode[];
+  documents: DocDocument[];
+}
+
+// POST /documents/folders body (FolderCreateIn). parent_id 생략 = space 직속.
+export interface FolderCreateBody {
+  space_id: string;
+  parent_id?: string | null;
+  name: string;
+}
+
+// POST /documents/files body (DocumentCreateIn). 빈 .docx/.xlsx 생성.
+export interface DocumentCreateBody {
+  space_id: string;
+  folder_id?: string | null;
+  name: string;
+  type: DocumentType;
+}
+
+// FE 헬퍼 — "새로 만들기/업로드" 대상 위치. 트리 노드(스페이스 루트/폴더)에서 해석.
+//   space 루트 → { spaceId, parentId:null }, 폴더 → { spaceId:folder.space_id, parentId:folder.id }.
+export interface DocCreateTarget {
+  spaceId: string;
+  parentId: string | null; // 폴더 id 또는 null(스페이스 루트)
+  label: string; // 위치 표시(스페이스명 / 폴더명)
+}

@@ -61,6 +61,10 @@ export function AppSidebar() {
   const { isHr } = useAuth();
   const pathname = usePathname();
 
+  // 문서관리 모듈은 자체 디렉토리 트리를 사이드바로 쓴다(시안 document-management.html).
+  // HR 네비 사이드바는 그 화면에서 숨긴다 — 시안의 단일 트리 사이드바와 정합.
+  if (pathname.startsWith("/documents")) return null;
+
   return (
     <aside className="flex w-[220px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar">
       <div className="px-4 pb-1 pt-4 text-[11px] font-semibold uppercase tracking-wide text-mgray-500">

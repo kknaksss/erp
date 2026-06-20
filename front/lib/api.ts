@@ -50,6 +50,13 @@ async function parse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// multipart(FormData) 본문은 Content-Type 을 브라우저가 boundary 와 함께 자동 설정해야 한다.
+// 우리가 application/json 을 강제하면 업로드가 깨지므로, FormData 일 때만 JSON 헤더를 생략한다.
+// (문서 업로드 POST /documents/files/upload — WP-006 P4 가 도입.)
+function jsonContentType(body: BodyInit | null | undefined): Record<string, string> {
+  return body instanceof FormData ? {} : { "Content-Type": "application/json" };
+}
+
 // 비인증 호출(login/refresh). 토큰을 붙이지 않는다.
 export async function apiFetch<T>(
   path: string,
@@ -58,7 +65,7 @@ export async function apiFetch<T>(
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...jsonContentType(init?.body),
       ...init?.headers,
     },
   });
@@ -75,7 +82,7 @@ export async function rawAuthedFetch(
   return fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...jsonContentType(init?.body),
       Authorization: `Bearer ${token}`,
       ...init?.headers,
     },
