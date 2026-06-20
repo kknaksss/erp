@@ -22,6 +22,9 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://erp:erp@localhost:54
 os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ.setdefault("MEDINESS_API_URL", "http://localhost:28080")
 os.environ.setdefault("ERP_SLACK_WEBHOOK_SECRET", "test-webhook-secret")
+# ONLYOFFICE 연동(WP-006 P3) — 결정적 테스트값. mediness jwt_secret 과 분리(신뢰 도메인 다름).
+os.environ.setdefault("ONLYOFFICE_JWT_SECRET", "test-onlyoffice-secret")
+os.environ.setdefault("ONLYOFFICE_CALLBACK_BASE_URL", "http://erp-api.test")
 
 # webhook 시크릿은 결정적 테스트값으로 강제(override) — DB(DATABASE_URL)만 .env 채택,
 # .env 의 실 시크릿이 슬랙 서명 테스트에 새어 401 나지 않게 한다(비-DB 시크릿 격리).

@@ -38,6 +38,17 @@ class Settings(BaseSettings):
     # Slack 워크플로우 webhook 공유 시크릿 (intake 출처 검증, SPEC-004 §검증) — secret 필수
     erp_slack_webhook_secret: str = Field(...)
 
+    # 문서관리 fs 저장소 volume root (WP-006 §저장소 — PG↔fs 책임 분리, 바이너리는 fs).
+    # 동작 파라미터라 default 유지(env/.env 미설정에도 동작). 배포 시 운영 경로로 override.
+    document_volume_root: str = "/tmp/erp-documents"
+
+    # ONLYOFFICE Document Server 연동 (WP-006 Phase 3, architecture §JWT). secret 필수.
+    # mediness `jwt_secret`(직원 신원)과 **분리** — DocServer↔BE 문서 세션 무결성용(신뢰 도메인 다름).
+    onlyoffice_jwt_secret: str = Field(...)
+    # DocServer 가 해석 가능한 BE base URL — download/callback 절대 URL 구성용(하드코딩 금지).
+    # 정확한 호스트(내부 네트워크명 vs 공개 도메인)는 배포 결정(architecture leg ③ "가정/미결").
+    onlyoffice_callback_base_url: str = Field(...)
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

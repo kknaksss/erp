@@ -15,6 +15,7 @@ from app.models.base import Base
 # 도메인 모델 추가 시 여기에 import 추가. 예) from app.models import user, leave_request
 # (미사용 import 경고는 ruff noqa F401 로 억제)
 from app.models import (  # noqa: F401
+    document,
     employee,
     leave_adjustment,
     leave_allocation,

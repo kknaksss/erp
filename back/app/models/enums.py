@@ -76,6 +76,23 @@ class EmploymentType(str, enum.Enum):
     PARTTIME = "parttime"  # 알바
 
 
+class SpaceType(str, enum.Enum):
+    """문서관리 스페이스 타입(SPEC-006 §Lifecycle, 2값) — **값은 영문**(외부 계약 그대로).
+
+    부서스페이스(부서별)·개인스페이스(직원별). 멤버십 판정 단위.
+    """
+
+    DEPARTMENT = "department"
+    PERSONAL = "personal"
+
+
+class DocumentType(str, enum.Enum):
+    """문서 타입(SPEC-006 §Lifecycle, 2값) — **값은 영문**. word=.docx / excel=.xlsx."""
+
+    WORD = "word"
+    EXCEL = "excel"
+
+
 def _pg_enum(py_enum: type[enum.Enum], name: str) -> SAEnum:
     """PG native enum 컬럼 타입 — value(한글) 저장, 타입 생성은 migration 위임."""
     return SAEnum(
@@ -96,6 +113,10 @@ grant_status_enum = _pg_enum(GrantStatus, "grant_status")
 request_status_enum = _pg_enum(RequestStatus, "request_status")
 request_channel_enum = _pg_enum(RequestChannel, "request_channel")
 employment_type_enum = _pg_enum(EmploymentType, "employment_type")
+
+# 문서관리 도메인 enum (WP-006 Phase 1) — 값 영문. migration 이 명시 CREATE/DROP.
+space_type_enum = _pg_enum(SpaceType, "space_type")
+document_type_enum = _pg_enum(DocumentType, "document_type")
 
 
 # migration 의 CREATE/DROP TYPE 순회용 (이름, 값목록).

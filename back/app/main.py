@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.core.errors import AppError
-from app.routers import auth, employees, health, leave, me
+from app.routers import auth, documents, employees, health, leave, me
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -40,3 +40,4 @@ app.include_router(auth.router)
 app.include_router(employees.router)
 app.include_router(leave.router)
 app.include_router(me.router)
+app.include_router(documents.router)

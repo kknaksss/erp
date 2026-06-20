@@ -81,3 +81,15 @@ class InvalidAdjustmentError(AppError):
     error_code = "INVALID_ADJUSTMENT"
     status_code = 422
     message = "연차수 조정 내용이 올바르지 않습니다"
+
+
+class InvalidDocumentError(AppError):
+    """문서관리 invariant 위반(폴더/파일 이름 빈값·미허용 업로드 형식·space 경계 횡단 등). WP-006.
+
+    SPEC-006 §Validation·§케이스 매트릭스의 422 케이스 전담. 연차 도메인과 별 도메인이라 별도
+    클래스(이름/형식/트리 무결성 위반을 한 클래스로 — `detail` 에 사유를 실어 보낸다).
+    """
+
+    error_code = "INVALID_DOCUMENT"
+    status_code = 422
+    message = "문서 요청 내용이 올바르지 않습니다"
