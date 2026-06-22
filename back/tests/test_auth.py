@@ -142,11 +142,7 @@ async def test_login_success_passthrough(monkeypatch) -> None:
     async def _fake(email, password):
         return _fake_response(200, body)
 
-    async def _noop_mirror(session, access):  # 200 경로의 lazy 미러 훅 격리(실제 /auth/me 호출 방지)
-        return None
-
     monkeypatch.setattr(auth_proxy, "login", _fake)
-    monkeypatch.setattr("app.routers.auth.roster.lazy_mirror_me", _noop_mirror)
     async with _client() as c:
         resp = await c.post("/auth/login", json={"email": "a@b.com", "password": "pw"})
     assert resp.status_code == 200

@@ -349,9 +349,9 @@ async def hr_employee_roster(
 ) -> list[Employee]:
     """HR 연차 운영(부여 대상·조정/상세 직원 선택)이 쓸 전 직원 명부(이름순). 비-HR 403·토큰없음 401.
 
-    admin 디렉토리(`GET /admin/employees`·require_admin·SPEC-002)와 별 목적·별 권한 축 —
+    직원 관리 디렉토리(`/admin/employees`·SPEC-002)와 같은 require_hr 게이트·별 목적(연차 운영) —
     member-role HR 도 200(department=="hr"). 부서 필터 안 함(전체 반환·FE 가 client-side 추림,
-    P1 벌크 부여 계약과 일관). 명부 쿼리·EmployeeOut 은 admin 디렉토리와 동일 소비(재정의 없음).
+    P1 벌크 부여 계약과 일관). 명부 쿼리·EmployeeOut 은 직원 디렉토리와 동일 소비(재정의 없음).
     """
     return await employee_repo.list_all(session)
 

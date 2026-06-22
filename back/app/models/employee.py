@@ -1,8 +1,9 @@
-"""employee — ERP 직원. mediness `users` 미러 + ERP 소유 필드.
+"""employee — ERP 직원. 전 필드 ERP 소유(origin).
 
-정본 계약 = ERP-SPEC-002(roster), 스키마 정본 = 40-architecture/domains/employee.md.
-신원 origin 은 mediness(단방향 미러). `id` = mediness `users.id`(연결키·토큰 `sub`) —
-mediness 로의 FK 아님(별도 DB). `password_hash` 없음(인증 위임, SPEC-001).
+정본 계약 = ERP-SPEC-002(직원 관리 origin), 스키마 정본 = 40-architecture/domains/employee.md.
+ERP 가 직원 정보(이름·부서·직급·role·재직 등)를 완전 소유한다 — mediness 와 sync 하지 않는다
+(pull·미러·동기 보존 로직 없음). 공유하는 것은 로그인 계정뿐이다. `id` = mediness 발급 계정 id
+채택(로그인 연계키·토큰 `sub`) — mediness 로의 FK 아님(별도 DB). `password_hash` 없음(인증 위임, SPEC-001).
 """
 
 from datetime import date
@@ -19,21 +20,20 @@ from app.models.enums import EmploymentType, employment_type_enum
 class Employee(Base, TimestampMixin):
     __tablename__ = "employee"
 
-    # mediness users.id 그대로 (연결키). default 없음 — origin 이 mediness.
+    # mediness 발급 계정 id 채택 (로그인 연계키). default 없음 — 생성 시 provisioning 응답 id 주입(P3).
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
 
-    # mediness 미러 (로그인 lazy /auth/me · admin 동기 /admin/users 에서 갱신)
+    # ERP 소유 (origin). email = 로그인 아이디. role = admin | member (mediness 와 갈라져도 무방).
     email: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    role: Mapped[str | None] = mapped_column(Text, nullable=True)  # admin | member
+    role: Mapped[str] = mapped_column(Text, nullable=False, server_default="member")  # admin | member
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
-    # ERP 소유 (동기에서 보존 — 미러로 덮어쓰지 않음). position enum = mediness 8값 재사용(값은 ERP 입력)
-    position: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # ERP 소유 (origin). position enum 8값(ceo~staff), department 단일 text(영문 코드, HR 판정="hr").
+    position: Mapped[str] = mapped_column(Text, nullable=False, server_default="staff")
     department: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # ERP 소유 HR 필드 (T-015 — 연차 대장 마이그레이션 준비). mediness User 에 없음 → 미러 대상 아님,
-    # roster 동기에서 position/department 처럼 보존. 전부 nullable(기존 행·동기 신규 값 없이 존재 가능).
+    # ERP 소유 HR 필드 (T-015 — 연차 대장 마이그레이션 준비). 전부 nullable(기존 행·값 없이 존재 가능).
     hire_date: Mapped[date | None] = mapped_column(Date, nullable=True)  # 입사일
     resigned_at: Mapped[date | None] = mapped_column(Date, nullable=True)  # 퇴사일(재직중=NULL)
     employment_type: Mapped[EmploymentType | None] = mapped_column(employment_type_enum, nullable=True)

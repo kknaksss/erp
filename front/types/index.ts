@@ -1,7 +1,18 @@
 // BE 계약 타입(DTO) — back/app/schemas/ 와 정렬.
 
-// SPEC-002 §3: role enum = admin | member (mediness 미러).
+// SPEC-002 §3: role enum = admin | member (ERP 소유 — origin).
 export type Role = "admin" | "member";
+
+// SPEC-002 §position: 직급 8값 (ERP 소유 라벨, mediness 와 독립).
+export type Position =
+  | "ceo"
+  | "coo"
+  | "cmo"
+  | "cto"
+  | "po"
+  | "manager"
+  | "leader"
+  | "staff";
 
 // 로그인/리프레시 user 객체 (mediness passthrough — SPEC-001 §S-1).
 // ⚠ role 없음 — 권한은 employee roster(self-row)에서 읽는다(P4 결정).
@@ -25,22 +36,37 @@ export interface LoginData extends TokenPair {
 }
 
 // 직원 명부 행 — back EmployeeOut (raw, 엔벨로프 없음).
+// SPEC-002(origin): 전 필드 ERP 소유. role·position 은 origin 에서 notnull(server_default)이나,
+// 마이그레이션 전 legacy 행 대비 표시 측은 null 을 방어적으로 허용("—" fallback) 한다.
 export interface Employee {
   id: string;
   email: string;
   name: string;
   role: Role | null;
   active: boolean;
-  position: string | null; // ERP 소유 — P5 입력 전까진 null
+  position: string | null;
   department: string | null;
   created_at: string;
   updated_at: string;
 }
 
-// POST /admin/employees/sync 응답 (raw).
-export interface SyncResult {
-  updated: number;
-  new: number;
+// 직원 생성 body (ERP origin CRUD — POST /admin/employees, BE P2 contract-first 가정).
+// 저장 시 mediness 로그인 계정 1회 provisioning(email + 임시비번), id=mediness 발급 채택(SPEC-002 §3).
+export interface EmployeeCreateBody {
+  name: string;
+  email: string; // 로그인 아이디 = provisioning push 대상
+  department: string; // 영문 부서 코드
+  position: Position;
+  role: Role;
+}
+
+// 직원 수정 body (ERP-local — PATCH /admin/employees/{id}). 이메일 제외(생성 시 확정).
+// mediness 로 push 하지 않는다(디커플 — SPEC-002 §U-2).
+export interface EmployeeUpdateBody {
+  name: string;
+  department: string;
+  position: Position;
+  role: Role;
 }
 
 // ---- 연차 (WP-003) — back/app/schemas/leave_request.py 와 정렬 ----------------

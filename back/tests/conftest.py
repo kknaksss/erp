@@ -21,6 +21,7 @@ os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://erp:erp@localhost:5432/erp_test")
 os.environ.setdefault("JWT_SECRET", "test-secret")
 os.environ.setdefault("MEDINESS_API_URL", "http://localhost:28080")
+os.environ.setdefault("INTERNAL_AUTH_SECRET", "test-internal-secret")
 os.environ.setdefault("ERP_SLACK_WEBHOOK_SECRET", "test-webhook-secret")
 # ONLYOFFICE 연동(WP-006 P3) — 결정적 테스트값. mediness jwt_secret 과 분리(신뢰 도메인 다름).
 os.environ.setdefault("ONLYOFFICE_JWT_SECRET", "test-onlyoffice-secret")

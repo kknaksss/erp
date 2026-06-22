@@ -20,6 +20,7 @@ from app.core.errors import ForbiddenError, InvalidTokenError
 from app.core.security import decode_access_token
 from app.models.employee import Employee
 from app.repositories import employee as employee_repo
+from app.services.employee_provisioning import MedinessProvisioningPort, ProvisioningPort
 
 # auto_error=False — 헤더 없음/형식오류 시 FastAPI 기본 403 대신 우리 401(InvalidTokenError) 로 통일
 _bearer = HTTPBearer(auto_error=False)
@@ -60,14 +61,14 @@ async def get_current_employee(
     user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_db)],
 ) -> Employee:
-    """current_user(sub) → employee 조회. 미러 행 없으면 401(로그인 lazy 미러 선행 필요).
+    """current_user(sub) → employee 조회. 미등록(행 없음)이면 403(접근 거부).
 
-    employee 행은 로그인 시 본인 `/auth/me` lazy 미러로 생성된다(SPEC-001). 토큰은 유효한데
-    행이 없으면(미러 실패/미로그인) 식별 불가 → 401 로 재로그인 유도.
+    employee 행은 ERP 소유(origin) — HR provisioning 으로 생성된다(SPEC-002, P3). mediness 미러 없음.
+    토큰은 유효(mediness 인증 통과)하나 ERP 미등록이면 접근 거부 403 — 자동 생성·빈 프로필 금지(SPEC-002 §S-4).
     """
     emp = await employee_repo.get_by_id(session, user.id)
     if emp is None:
-        raise InvalidTokenError("직원 정보를 찾을 수 없습니다")
+        raise ForbiddenError("등록되지 않은 직원입니다")
     return emp
 
 
@@ -99,6 +100,11 @@ async def require_hr(
     return employee
 
 
+def get_provisioning_port() -> ProvisioningPort:
+    """provisioning 포트 주입 — 실 mediness internal-auth 어댑터(WP-007 P3). 테스트는 fake/mock override."""
+    return MedinessProvisioningPort()
+
+
 __all__ = [
     "get_db",
     "CurrentUser",
@@ -107,4 +113,5 @@ __all__ = [
     "get_current_employee",
     "require_admin",
     "require_hr",
+    "get_provisioning_port",
 ]

@@ -3,7 +3,7 @@
 // 셸 사이드바 — 워크스페이스/관리자(HR) 2섹션 네비.
 // 로고·유저·로그아웃은 글로벌 모듈 헤더(app-module-header)로 이관 — 시안 따름.
 // role 게이트: 관리자(HR) 섹션은 isHr(department=hr) 에게만 노출(SPEC-002 §U-1).
-import { CalendarCheck, CalendarDays, LayoutGrid, Users } from "lucide-react";
+import { CalendarCheck, CalendarDays, LayoutGrid, UsersRound } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -21,11 +21,11 @@ type NavItem = {
 const workspaceNav: NavItem[] = [
   { label: "대시보드", icon: LayoutGrid, href: "/" },
   { label: "연차조회", icon: CalendarCheck, href: "/leave" }, // WP-003 P3 — 전 직원
-  { label: "직원 디렉토리", icon: Users, href: "/directory" },
 ];
 
 const adminNav: NavItem[] = [
   { label: "연차관리", icon: CalendarDays, href: "/leave/admin", badge: "HR" }, // WP-003 P4 — HR 전용
+  { label: "직원 관리", icon: UsersRound, href: "/directory", badge: "HR" }, // WP-007 P4 — HR origin CRUD(SPEC-002)
 ];
 
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
