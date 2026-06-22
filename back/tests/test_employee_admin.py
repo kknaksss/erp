@@ -59,7 +59,7 @@ def _mint(sub: str) -> str:
     return jwt.encode(claims, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-_VALID = {"name": "홍길동", "email": "hong@x.com", "department": "sales",
+_VALID = {"name": "홍길동", "email": "hong@x.com", "department": "dev",
           "position": "manager", "role": "member"}
 
 
@@ -81,7 +81,7 @@ async def test_create_adopts_provisioned_id_and_persists(db_session) -> None:
         body = resp.json()
         assert uuid.UUID(body["id"]) == issued          # 발급 id 채택
         assert body["role"] == "member" and body["position"] == "manager"
-        assert body["department"] == "sales" and body["active"] is True
+        assert body["department"] == "dev" and body["active"] is True
         # 실제 적재 확인(ERP-local)
         emp = await employee_repo.get_by_id(db_session, issued)
         assert emp is not None and emp.email == "hong@x.com"

@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/table";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Employee } from "@/types";
+import { DEPARTMENT_LABELS, type Department, type Employee } from "@/types";
 
 type LoadState =
   | { kind: "loading" }
@@ -171,7 +171,11 @@ export default function DirectoryPage() {
                       <TableCell className="font-mono text-[13px]">
                         {e.email}
                       </TableCell>
-                      <TableCell>{e.department ?? "—"}</TableCell>
+                      <TableCell>
+                        {DEPARTMENT_LABELS[e.department as Department] ??
+                          e.department ??
+                          "—"}
+                      </TableCell>
                       <TableCell>{e.position ?? "—"}</TableCell>
                       <TableCell>
                         <Badge variant={e.role === "admin" ? "default" : "neutral"}>

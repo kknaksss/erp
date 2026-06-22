@@ -14,6 +14,17 @@ export type Position =
   | "leader"
   | "staff";
 
+// SPEC-002 §department: 부서 enum 5값 (ERP 소유). 저장값=영문 코드, 화면=한글 라벨. HR 게이트=`hr`.
+export type Department = "hr" | "dev" | "planning" | "qa" | "clevel";
+export const DEPARTMENTS: Department[] = ["hr", "dev", "planning", "qa", "clevel"];
+export const DEPARTMENT_LABELS: Record<Department, string> = {
+  hr: "인사",
+  dev: "개발",
+  planning: "기획",
+  qa: "QA",
+  clevel: "C레벨",
+};
+
 // 로그인/리프레시 user 객체 (mediness passthrough — SPEC-001 §S-1).
 // ⚠ role 없음 — 권한은 employee roster(self-row)에서 읽는다(P4 결정).
 export interface AuthUser {
@@ -55,7 +66,7 @@ export interface Employee {
 export interface EmployeeCreateBody {
   name: string;
   email: string; // 로그인 아이디 = provisioning push 대상
-  department: string; // 영문 부서 코드
+  department: Department; // 영문 부서 코드 (enum 5값)
   position: Position;
   role: Role;
 }
@@ -64,7 +75,7 @@ export interface EmployeeCreateBody {
 // mediness 로 push 하지 않는다(디커플 — SPEC-002 §U-2).
 export interface EmployeeUpdateBody {
   name: string;
-  department: string;
+  department: Department;
   position: Position;
   role: Role;
 }

@@ -107,7 +107,7 @@ async def test_create_provisioning_failure_no_employee(db_session, monkeypatch) 
         return _resp(400, {"error_code": "VALIDATION_ERROR"})  # email 충돌
 
     monkeypatch.setattr(httpx.AsyncClient, "post", _fake_post)
-    payload = EmployeeCreate(name="홍길동", email="dup@x.com", department="sales",
+    payload = EmployeeCreate(name="홍길동", email="dup@x.com", department="dev",
                              position="manager", role="member")
     with pytest.raises(ConflictError):
         await employee_admin.create(db_session, payload, MedinessProvisioningPort())

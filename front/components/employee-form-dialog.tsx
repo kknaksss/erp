@@ -30,12 +30,15 @@ import {
 } from "@/components/ui/select";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type {
-  Employee,
-  EmployeeCreateBody,
-  EmployeeUpdateBody,
-  Position,
-  Role,
+import {
+  DEPARTMENTS,
+  DEPARTMENT_LABELS,
+  type Department,
+  type Employee,
+  type EmployeeCreateBody,
+  type EmployeeUpdateBody,
+  type Position,
+  type Role,
 } from "@/types";
 
 // 직급 8값 (SPEC-002 §position). 시안 select 순서 그대로.
@@ -76,7 +79,10 @@ export function EmployeeFormDialog({
   const initial = mode.kind === "edit" ? mode.employee : null;
   const [name, setName] = useState(initial?.name ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
-  const [department, setDepartment] = useState(initial?.department ?? "");
+  // 부서 enum 5값. 생성 기본값=dev(비-HR 안전 기본 — hr 기본은 권한 오부여 위험). edit 는 기존값 프리필.
+  const [department, setDepartment] = useState<Department>(
+    (initial?.department as Department) ?? "dev",
+  );
   const [position, setPosition] = useState<Position>(
     (initial?.position as Position) ?? "staff",
   );
@@ -92,17 +98,12 @@ export function EmployeeFormDialog({
   async function onSubmit() {
     const trimmedName = name.trim();
     const trimmedEmail = email.trim();
-    const trimmedDept = department.trim();
     if (!trimmedName) {
       setError("이름을 입력해주세요");
       return;
     }
     if (!isEdit && !trimmedEmail) {
       setError("이메일(로그인 아이디)을 입력해주세요");
-      return;
-    }
-    if (!trimmedDept) {
-      setError("부서(영문 코드)를 입력해주세요");
       return;
     }
 
@@ -112,7 +113,7 @@ export function EmployeeFormDialog({
       if (mode.kind === "edit") {
         const body: EmployeeUpdateBody = {
           name: trimmedName,
-          department: trimmedDept,
+          department,
           position,
           role,
         };
@@ -126,7 +127,7 @@ export function EmployeeFormDialog({
         const body: EmployeeCreateBody = {
           name: trimmedName,
           email: trimmedEmail,
-          department: trimmedDept,
+          department,
           position,
           role,
         };
@@ -214,20 +215,24 @@ export function EmployeeFormDialog({
           {/* 부서 / 직급 */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <label
-                htmlFor="emp-department"
-                className="block text-[12px] font-medium text-mgray-700"
-              >
-                부서{" "}
-                <span className="font-normal text-mgray-400">(영문 코드)</span>
+              <label className="block text-[12px] font-medium text-mgray-700">
+                부서
               </label>
-              <Input
-                id="emp-department"
-                className="font-mono"
+              <Select
                 value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-                placeholder="sales"
-              />
+                onValueChange={(v) => setDepartment(v as Department)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {DEPARTMENTS.map((d) => (
+                    <SelectItem key={d} value={d}>
+                      {DEPARTMENT_LABELS[d]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-1.5">
               <label className="block text-[12px] font-medium text-mgray-700">
